@@ -1,0 +1,49 @@
+[package]
+name = "minecrab"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1"
+bytemuck = { version = "1.12", features = [ "derive" ] }
+byteorder = "1.4"
+flate2 = "1.0"
+fnv = "1.0.7"
+font-awesome = "0.2"
+futures = "0.3"
+glam = "0.21"
+hecs = "0.9"
+hex = "0.4"
+image = "0.24"
+imgui = "0.8"
+imgui-wgpu = "0.20"
+imgui-winit-support = { version = "0.8", features = ["winit-26"] }
+intmap = "2.0.0"
+log = "0.4"
+nibble_vec = "0.1.0"
+pretty_env_logger = "0.4"
+profiling = { version = "1.0.7", features = ["profile-with-tracy"] }
+raw-cpuid = "10.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.21.2", features = ["full"] }
+tracy-client = "0.14.1"
+wgpu = { version = "0.13", features = ["spirv"] }
+winit = "0.26"
+
+[build-dependencies]
+rustc_version = "0.4.0"
+shaderc = "0.8"
+version = "3.0.0"
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+# [profile.release]
+# opt-level = 3
+# lto = true
+# overflow-checks = false
+# strip = "debuginfo"
+

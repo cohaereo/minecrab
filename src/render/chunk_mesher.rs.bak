@@ -1,0 +1,236 @@
+use crate::world::ChunkData;
+
+pub const MAX_VERTICES_PER_CHUNK: usize = 17 * 17 * 257;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ChunkVertex {
+    pub pos: [f32; 3],
+    pub block: u32,
+}
+
+impl ChunkVertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32];
+
+    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        use std::mem;
+
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
+pub fn mesh_chunk(coords: (i32, i32), c: &ChunkData) -> (Vec<ChunkVertex>, Vec<u32>) {
+    let (mut vertices, mut indices) = (vec![], vec![]);
+    let mut ic = 0;
+    // let mut vertmap: FnvHashMap<(u8, u8, u8), u16> = FnvHashMap::default();
+    // let mut vertmap = BitVec::from_elem(CHUNK_SIZE, false);
+    // let mut vertmap = IntMap::new();
+    // let mut vertmap = [u32::MAX; MAX_VERTICES_PER_CHUNK];
+
+    macro_rules! vert {
+        ($side:expr, $block:expr, $x:expr, $y:expr, $z:expr) => {{
+            {
+                vertices.push(ChunkVertex {
+                    pos: [$x as f32, $y as f32, $z as f32],
+                    block: $block as u32 | (($side as u32) << 8),
+                });
+                // vertmap[pos] = ic;
+
+                ic += 1;
+                (ic - 1)
+                // }
+            }
+        }};
+    }
+
+    macro_rules! face {
+        ($v1:expr, $v2:expr, $v3:expr, $v4:expr) => {
+            indices.push($v1); // Bottom left
+            indices.push($v2); // Top left
+            indices.push($v3); // Top right
+
+            indices.push($v3); // Top right
+            indices.push($v4); // Bottom right
+            indices.push($v1); // Bottom left
+        };
+    }
+
+    macro_rules! independent_face {
+        ($side:expr, $block:expr, $v1:expr, $v2:expr, $v3:expr, $v4:expr) => {
+            let i0 = vert!(
+                $side,
+                $block,
+                coords.0 as i64 * 16 + $v1.0,
+                $v1.1,
+                coords.1 as i64 * 16 + $v1.2
+            ); // 0, front bottom left
+            let i1 = vert!(
+                $side,
+                $block,
+                coords.0 as i64 * 16 + $v2.0,
+                $v2.1,
+                coords.1 as i64 * 16 + $v2.2
+            ); // 1, front bottom right
+            let i2 = vert!(
+                $side,
+                $block,
+                coords.0 as i64 * 16 + $v3.0,
+                $v3.1,
+                coords.1 as i64 * 16 + $v3.2
+            ); // 2, back bottom left
+            let i3 = vert!(
+                $side,
+                $block,
+                coords.0 as i64 * 16 + $v4.0,
+                $v4.1,
+                coords.1 as i64 * 16 + $v4.2
+            ); // 3, back bottom right
+
+            indices.push(i0); // Bottom left
+            indices.push(i1); // Top left
+            indices.push(i2); // Top right
+
+            indices.push(i2); // Top right
+            indices.push(i3); // Bottom right
+            indices.push(i0); // Bottom left
+        };
+    }
+
+    for x in 0..16 {
+        for z in 0..16 {
+            for y in 64..256 {
+                let block = c.get_block(x, y, z);
+                if block != 0 && !c.is_block_obstructed(x, y, z) {
+                    let (nup, ndown, nleft, nright, nfront, nback) = c.get_neighbours(x, y, z);
+
+                    // // TODO: could clean up the indices?
+                    // let i0 = vert!(block, x + 0, y, z + 0); // 0, front bottom left
+                    // let i1 = vert!(block, x + 1, y, z + 0); // 1, front bottom right
+                    // let i2 = vert!(block, x + 0, y, z + 1); // 2, back bottom left
+                    // let i3 = vert!(block, x + 1, y, z + 1); // 3, back bottom right
+                    // let i4 = vert!(block, x + 0, y + 1, z + 0); // 4, front top left
+                    // let i5 = vert!(block, x + 1, y + 1, z + 0); // 5, front top right
+                    // let i6 = vert!(block, x + 0, y + 1, z + 1); // 6, back top left
+                    // let i7 = vert!(block, x + 1, y + 1, z + 1); // 7, back top right
+
+                    // if !nup {
+                    //     face!(i4, i6, i7, i5);
+                    // }
+
+                    // if !ndown {
+                    //     face!(i1, i3, i2, i0);
+                    // }
+
+                    // if !nleft {
+                    //     face!(i0, i2, i6, i4);
+                    // }
+
+                    // if !nright {
+                    //     face!(i1, i5, i7, i3);
+                    // }
+
+                    // if !nfront {
+                    //     face!(i0, i4, i5, i1);
+                    // }
+
+                    // if !nback {
+                    //     face!(i7, i6, i2, i3);
+                    // }
+
+                    // * This code is a little more hefty because it creates 4 vertices for every face.
+                    if !nup {
+                        // face!(i4, i6, i7, i5);
+
+                        // let i4 = vert!(block, x + 0, y + 1, z + 0); // 4, front top left
+                        // let i6 = vert!(block, x + 0, y + 1, z + 1); // 6, back top left
+                        // let i7 = vert!(block, x + 1, y + 1, z + 1); // 7, back top right
+                        // let i5 = vert!(block, x + 1, y + 1, z + 0); // 5, front top right
+                        independent_face!(
+                            0,
+                            block,
+                            (x + 0, y + 1, z + 0),
+                            (x + 0, y + 1, z + 1),
+                            (x + 1, y + 1, z + 1),
+                            (x + 1, y + 1, z + 0)
+                        );
+                    }
+
+                    if !ndown {
+                        // face!(i1, i3, i2, i0);
+                        independent_face!(
+                            1,
+                            block,
+                            (x + 1, y + 0, z + 0),
+                            (x + 1, y + 0, z + 1),
+                            (x + 0, y + 0, z + 1),
+                            (x + 0, y + 0, z + 0)
+                        );
+                    }
+
+                    if !nleft {
+                        // let i0 = vert!(block, x + 0, y, z + 0); // 0, front bottom left
+                        // let i2 = vert!(block, x + 0, y, z + 1); // 2, back bottom left
+                        // let i6 = vert!(block, x + 0, y + 1, z + 1); // 6, back top left
+                        // let i4 = vert!(block, x + 0, y + 1, z + 0); // 4, front top left
+                        // face!(i0, i2, i6, i4);
+
+                        independent_face!(
+                            2,
+                            block,
+                            (x + 0, y, z + 0),
+                            (x + 0, y, z + 1),
+                            (x + 0, y + 1, z + 1),
+                            (x + 0, y + 1, z + 0)
+                        );
+                    }
+
+                    if !nright {
+                        // face!(i1, i5, i7, i3);
+
+                        independent_face!(
+                            3,
+                            block,
+                            (x + 1, y + 1, z + 0),
+                            (x + 1, y + 1, z + 1),
+                            (x + 1, y, z + 1),
+                            (x + 1, y, z + 0)
+                        );
+                    }
+
+                    if !nfront {
+                        // face!(i0, i4, i5, i1);
+
+                        independent_face!(
+                            4,
+                            block,
+                            (x + 0, y, z + 0),
+                            (x + 0, y + 1, z + 0),
+                            (x + 1, y + 1, z + 0),
+                            (x + 1, y, z + 0)
+                        );
+                    }
+
+                    if !nback {
+                        // face!(i7, i6, i2, i3);
+
+                        independent_face!(
+                            5,
+                            block,
+                            (x + 1, y, z + 1),
+                            (x + 1, y + 1, z + 1),
+                            (x + 0, y + 1, z + 1),
+                            (x + 0, y, z + 1)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    (vertices, indices)
+}
