@@ -9,11 +9,11 @@ mod build_info {
 }
 
 use tokio::{net::TcpStream, sync::mpsc};
-use trallocator::Trallocator;
 
 use std::time::Instant;
 
-use glam::{Mat4, Vec2, Vec3, Vec3Swizzles};
+use clap::Parser;
+use glam::{DVec3, Mat4, Vec2, Vec3, Vec3Swizzles};
 use imgui::FontGlyphRanges;
 use wgpu::util::DeviceExt;
 use world::ChunkManager;
@@ -42,27 +42,43 @@ mod fixed_point;
 mod net;
 mod nibble_slice;
 mod render;
-mod trallocator;
 mod varint;
 mod world;
-// use std::alloc::System;
-
-// #[global_allocator]
-// static GLOBAL: Trallocator<System> = Trallocator::new(System);
 
 const ICON_MIN_FA: u32 = 0xe005;
 const ICON_MAX_FA: u32 = 0xf8ff;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct CliArgs {
+    /// Address of the server to connect to
+    #[arg(short, long, default_value = "localhost")]
+    address: String,
+
+    /// Port to use
+    #[arg(short, long, default_value_t = 25565)]
+    port: u16,
+
+    #[arg(short, long, default_value = "Nautilus")]
+    username: String,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // GLOBAL.reset();
     pretty_env_logger::init();
 
+    let args = CliArgs::parse();
+
     let _client = tracy_client::Client::start();
 
     let mut chunks = ChunkManager::new();
 
-    let (mut conn_read, mut conn_write) = TcpStream::connect("localhost:25565").await?.into_split();
+    let (mut conn_read, mut conn_write) =
+        TcpStream::connect(format!("{}:{}", args.address, args.port))
+            .await?
+            .into_split();
 
     let (write_tx, mut write_rx) = tokio::sync::mpsc::channel::<net::packets::Packet>(128);
     tokio::spawn(async move {
@@ -81,14 +97,14 @@ async fn main() -> anyhow::Result<()> {
     write_tx
         .send(net::packets::Packet::Handshake {
             protocol_version: 5,
-            server_address: "localhost".to_string(),
-            server_port: 25565,
+            server_address: args.address,
+            server_port: args.port,
             next_state: 2,
         })
         .await?;
 
     write_tx
-        .send(net::packets::Packet::LoginStart("cohaereo2".to_string()))
+        .send(net::packets::Packet::LoginStart(args.username))
         .await?;
 
     // Wait for login success
@@ -134,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Switch packet handling to a new thread
     // ! Unholy.
-    let (chunks_tx, mut chunks_rx) = mpsc::channel::<net::packets::Packet>(256);
+    let (main_tx, mut main_rx) = mpsc::channel::<net::packets::Packet>(256);
     let write_tx_net = write_tx.clone();
     tokio::spawn(async move {
         'game: loop {
@@ -142,16 +158,8 @@ async fn main() -> anyhow::Result<()> {
             match decode_packet(&p) {
                 Ok(p) => match p {
                     net::packets::Packet::KeepAlive(t) => {
-                        println!("Got keepalive 0x{:x}", t);
                         write_tx_net
                             .send(net::packets::Packet::KeepAlive(t))
-                            .await
-                            .unwrap();
-                        write_tx_net
-                            .send(net::packets::Packet::ChatMessage(format!(
-                                "Got keepalive 0x{:x}",
-                                t
-                            )))
                             .await
                             .unwrap();
                     }
@@ -163,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
                         pitch,
                         on_ground,
                     } => {
+                        main_tx.send(p).await.unwrap();
                         write_tx_net
                             .send(net::packets::Packet::PlayerPositionLookClient {
                                 x,
@@ -176,26 +185,22 @@ async fn main() -> anyhow::Result<()> {
                             .await
                             .unwrap();
                     }
-                    net::packets::Packet::Respawn { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::MapChunkBulk { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::ChunkData { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::BlockChange { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::DestroyEntities { .. } => {
-                        chunks_tx.send(p).await.unwrap()
-                    }
+                    net::packets::Packet::Respawn { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::MapChunkBulk { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::ChunkData { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::BlockChange { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::DestroyEntities { .. } => main_tx.send(p).await.unwrap(),
                     net::packets::Packet::EntityLookRelativeMove { .. } => {
-                        chunks_tx.send(p).await.unwrap()
+                        main_tx.send(p).await.unwrap()
                     }
                     net::packets::Packet::EntityRelativeMove { .. } => {
-                        chunks_tx.send(p).await.unwrap()
+                        main_tx.send(p).await.unwrap()
                     }
-                    net::packets::Packet::EntityVelocity { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::SpawnMob { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::SpawnObject { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::SpawnPlayer { .. } => chunks_tx.send(p).await.unwrap(),
-                    net::packets::Packet::MultiBlockChange { .. } => {
-                        chunks_tx.send(p).await.unwrap()
-                    }
+                    net::packets::Packet::EntityVelocity { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::SpawnMob { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::SpawnObject { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::SpawnPlayer { .. } => main_tx.send(p).await.unwrap(),
+                    net::packets::Packet::MultiBlockChange { .. } => main_tx.send(p).await.unwrap(),
                     net::packets::Packet::ChatMessage(s) => {
                         info!("Chat message: {}", s);
                     }
@@ -219,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap();
     let size = window.inner_size();
 
-    let instance = wgpu::Instance::new(wgpu::Backends::VULKAN);
+    let instance = wgpu::Instance::new(wgpu::Backends::all());
     info!("Available devices:");
     for b in instance.enumerate_adapters(wgpu::Backends::all()) {
         info!(
@@ -248,7 +253,7 @@ async fn main() -> anyhow::Result<()> {
             },
             label: None,
         },
-        None, // Trace path
+        None,
     ))
     .unwrap();
     info!(
@@ -351,6 +356,9 @@ async fn main() -> anyhow::Result<()> {
         label: Some("texture_bind_group"),
     });
 
+    let mut depth_texture =
+        texture::Texture::create_depth_texture(&device, &surface_config, "depth_texture");
+
     let mut camera_controller = CameraController::new(6.0);
 
     let chunk_pipeline = ChunkRenderer::create_pipeline(
@@ -359,8 +367,6 @@ async fn main() -> anyhow::Result<()> {
         &texture_bind_group_layout,
         surface_config.format,
     );
-    let mut depth_texture =
-        texture::Texture::create_depth_texture(&device, &surface_config, "depth_texture");
 
     const CHUNK_AABB: AABB = AABB {
         min: Vec3::splat(0.),
@@ -445,6 +451,8 @@ async fn main() -> anyhow::Result<()> {
         .get_processor_brand_string()
         .and_then(|b| Some(b.as_str().to_string()))
         .unwrap_or("Unknown CPU".to_string());
+
+    let mut actual_player_pos = Vec3::default();
     let mut frame_count = 0;
     let mut last_frame = Instant::now();
     let mut chunks_rendered = 0;
@@ -492,7 +500,7 @@ async fn main() -> anyhow::Result<()> {
                         depth_texture = texture::Texture::create_depth_texture(
                             &device,
                             &surface_config,
-                            "depth_texture",
+                            "depth texture",
                         );
                         camera.aspect = size.width as f32 / size.height as f32;
                     }
@@ -509,7 +517,7 @@ async fn main() -> anyhow::Result<()> {
                 // ! Yes i know doing this just before rendering a frame isn't great but it doesnt need to be yet.
                 let mut packet_quota = 64;
                 loop {
-                    if let Ok(p) = chunks_rx.try_recv() {
+                    if let Ok(p) = main_rx.try_recv() {
                         match p {
                             net::packets::Packet::MapChunkBulk {
                                 columns,
@@ -531,19 +539,6 @@ async fn main() -> anyhow::Result<()> {
                                         )
                                         .unwrap();
                                     data_offset += bytes_read as usize;
-
-                                    // if let Some(cc) = chunks.get(&(cm.chunk_x, cm.chunk_z)) {
-                                    //     for cy in 0..16 {
-                                    //         if let Some(cd) = cc.get_section(cy) {
-                                    //             chunk_renderdata.push(ChunkRenderData::new_from_chunk(
-                                    //                 &chunks,
-                                    //                 &device,
-                                    //                 (cm.chunk_x, cy as i32, cm.chunk_z),
-                                    //                 cd,
-                                    //             ));
-                                    //         }
-                                    //     }
-                                    // }
                                 }
 
                                 if data_offset < data.len() {
@@ -570,11 +565,9 @@ async fn main() -> anyhow::Result<()> {
                                     .unwrap();
                             }
                             net::packets::Packet::Respawn { .. } => {
-                                // chunk_renderdata.clear();
                                 chunks.chunks.clear();
 
                                 // Shrink to reclaim memory
-                                // chunk_renderdata.shrink_to_fit();
                                 chunks.chunks.shrink_to_fit();
                             }
                             net::packets::Packet::BlockChange {
@@ -602,11 +595,10 @@ async fn main() -> anyhow::Result<()> {
                                 dx,
                                 dy,
                                 dz,
-                                yaw,
-                                pitch,
+                                ..
                             } => {
                                 let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p, v)) =
+                                if let Ok((p, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
                                     p.0 += Vec3::new(dx as f32, dy as f32, dz as f32);
@@ -614,7 +606,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                             net::packets::Packet::EntityRelativeMove { eid, dx, dy, dz } => {
                                 let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p, v)) =
+                                if let Ok((p, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
                                     p.0 += Vec3::new(dx as f32, dy as f32, dz as f32);
@@ -622,7 +614,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                             net::packets::Packet::EntityVelocity { eid, x, y, z } => {
                                 let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p, v)) =
+                                if let Ok((_p, v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
                                     v.0 = Vec3::new(x as f32, y as f32, z as f32)
@@ -631,16 +623,13 @@ async fn main() -> anyhow::Result<()> {
                             }
                             net::packets::Packet::SpawnMob {
                                 eid,
-                                mobtype,
                                 x,
                                 y,
                                 z,
-                                yaw,
-                                pitch,
-                                head_pitch,
                                 velocity_x,
                                 velocity_y,
                                 velocity_z,
+                                ..
                             } => {
                                 let ent = ecs::get_or_insert(&mut world, eid);
                                 if let Ok((p, v)) =
@@ -656,13 +645,13 @@ async fn main() -> anyhow::Result<()> {
                             }
                             net::packets::Packet::SpawnObject { eid, x, y, z, .. } => {
                                 let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p)) = world.query_one_mut::<(&mut Position)>(ent) {
+                                if let Ok(p) = world.query_one_mut::<&mut Position>(ent) {
                                     p.0 = Vec3::new(x as f32, y as f32, z as f32);
                                 }
                             }
                             net::packets::Packet::SpawnPlayer { eid, x, y, z, .. } => {
                                 let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p)) = world.query_one_mut::<(&mut Position)>(ent) {
+                                if let Ok(p) = world.query_one_mut::<&mut Position>(ent) {
                                     p.0 = Vec3::new(x as f32, y as f32, z as f32);
                                 }
                             }
@@ -671,6 +660,17 @@ async fn main() -> anyhow::Result<()> {
                                     let eid = ecs::get_or_insert(&mut world, e);
                                     world.despawn(eid).ok();
                                 }
+                            }
+                            net::packets::Packet::PlayerPositionLookServer {
+                                x,
+                                y,
+                                z,
+                                yaw,
+                                pitch,
+                                on_ground,
+                            } => {
+                                actual_player_pos = Vec3::new(x as f32, y as f32, z as f32);
+                                camera.position = actual_player_pos;
                             }
                             _ => {}
                         }
@@ -703,16 +703,7 @@ async fn main() -> anyhow::Result<()> {
 
                 if dirty_chunk_count != 0 {
                     let mut chunk_meshing_quota = 8;
-                    // let mut chunk_meshing_quota = (dirty_chunk_count / 128).max(8);
                     for (coord, chunk) in chunks.chunks.iter_mut() {
-                        // for c in s {
-                        //     if let Some(c) = c {
-                        //         if c.dirty {
-                        //             c.renderdata =
-                        //                 Some(ChunkRenderData::new_from_chunk(&chunks, &device))
-                        //         }
-                        //     }
-                        // }
                         for cy in 0..16 {
                             if let Some(cd) = chunk.get_section_mut(cy) {
                                 if cd.dirty {
@@ -735,6 +726,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
+                // Send player position every tick
+                // FIXME: If you dont have vsync enabled (or a 60hz monitor) this is going to hurt
                 if frame_count % 3 == 0 {
                     write_tx
                         .try_send(net::packets::Packet::PlayerPositionLookClient {
@@ -748,10 +741,6 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .ok();
                 }
-
-                // if (frame_count % 60) == 0 {
-                // info!("FPS: {}", 1.0 / frame_delta);
-                // }
 
                 last_frame = Instant::now();
                 camera_controller.update_camera(&mut camera, frame_delta);
@@ -768,7 +757,6 @@ async fn main() -> anyhow::Result<()> {
                     .expect("Failed to prepare imgui frame");
 
                 let ui = imgui_ctx.frame();
-                ui.show_demo_window(&mut demo_open);
 
                 imgui::Window::new("Debug information")
                     .collapsible(false)
@@ -804,7 +792,6 @@ async fn main() -> anyhow::Result<()> {
 
                 imgui::Window::new("System information").build(&ui, || {
                     ui.text(format!("Rust: {}", build_info::RUSTC_VERSION));
-                    // ui.text(format!("Mem: {}MB", GLOBAL.get() / 1024 / 1024));
                     ui.separator();
                     ui.text(format!("CPU: {}", cpu_brand));
                     ui.separator();
@@ -812,7 +799,11 @@ async fn main() -> anyhow::Result<()> {
                         "Display: {}x{} ({:04x})",
                         surface_config.width, surface_config.height, adapter_info.vendor
                     ));
-                    ui.text(&adapter_info.name);
+                    ui.text(format!(
+                        "{} on {:?}",
+                        &adapter_info.name, adapter_info.backend
+                    ));
+                    // TODO: Upgrade to wgpu 0.14 so we can use this, the imgui integration currently depends on 0.13
                     // ui.text(&adapter_info.driver_info);
                 });
 
@@ -836,6 +827,9 @@ async fn main() -> anyhow::Result<()> {
                                     r: 0.541,
                                     g: 0.675,
                                     b: 1.000,
+                                    // r: 0.20,
+                                    // g: 0.031,
+                                    // b: 0.031,
                                     a: 1.000,
                                 }),
                                 store: true,
@@ -858,7 +852,6 @@ async fn main() -> anyhow::Result<()> {
                     chunks_rendered = 0;
                     total_chunks = 0;
                     for (_, c) in chunks.chunks.iter() {
-                        // for cr in &chunk_renderdata {
                         for section in &c.sections {
                             if let Some(s) = section {
                                 if let Some(cr) = &s.renderdata {
@@ -868,13 +861,6 @@ async fn main() -> anyhow::Result<()> {
                                         (cr.position.2 * 16 + 8) as f32,
                                     );
 
-                                    // let distance = center.distance(camera.position);
-                                    // if distance > (4. * 16.) {
-                                    //     continue;
-                                    // }
-
-                                    // let cr = &chunk_renderdata.first().unwrap();
-                                    // println!("{:?}", cr.position);
                                     if cr.position.1 >= 16 {
                                         warn!("chunk section {:?} has invalid Y", cr.position);
                                         continue;
@@ -886,23 +872,18 @@ async fn main() -> anyhow::Result<()> {
                                         (cr.position.2 * 16) as f32,
                                     );
 
-                                    let chunkpos_2d = Vec2::new(
-                                        (cr.position.0 * 16) as f32,
-                                        (cr.position.2 * 16) as f32,
-                                    );
+                                    let chunk_transform = Mat4::from_translation(chunkpos_real);
 
-                                    let _chunk_transform = Mat4::from_translation(chunkpos_real);
-                                    // println!(
-                                    //     "{} {}",
-                                    //     chunk_transform * CHUNK_AABB.min.extend(1.0),
-                                    //     chunk_transform * CHUNK_AABB.max.extend(1.0)
-                                    // );
-
-                                    if chunkpos_2d.distance(camera.position.xz())
-                                        < (render_distance as f32 * 16.)
+                                    if chunkpos_real.distance(camera.position)
+                                        < (render_distance as f32 * 2. * 16.)
                                     {
-                                        if camera.is_in_frustrum(CHUNK_AABB, _chunk_transform) {
-                                            ChunkRenderer::render(&mut render_pass, cr);
+                                        if camera.is_in_frustrum(CHUNK_AABB, chunk_transform) {
+                                            ChunkRenderer::render(
+                                                &mut render_pass,
+                                                cr,
+                                                camera.position,
+                                                render_distance as u32,
+                                            );
                                             chunks_rendered += 1;
                                         }
                                     }
@@ -915,7 +896,7 @@ async fn main() -> anyhow::Result<()> {
                     render_pass.set_pipeline(&debugcube_pipeline);
                     render_pass.set_bind_group(0, &camera_bind_group, &[]);
                     render_pass.set_bind_group(1, &texture_bind_group_debugcube, &[]);
-                    for (e, (position)) in world.query::<(&Position)>().iter() {
+                    for (_, position) in world.query::<&Position>().iter() {
                         debugcube.render(&mut render_pass, position.0);
                     }
 
@@ -928,12 +909,6 @@ async fn main() -> anyhow::Result<()> {
                         );
                         debuglines.render(&mut render_pass, camera_chunk);
                     }
-
-                    // info!(
-                    //     "Rendered chunks. loaded={} submitted={}",
-                    //     chunk_renderdata.len(),
-                    //     total_rendered
-                    // );
                 }
 
                 {
@@ -956,7 +931,6 @@ async fn main() -> anyhow::Result<()> {
                         .expect("Rendering failed");
                 }
 
-                // submit will accept anything that implements IntoIter
                 queue.submit(std::iter::once(encoder.finish()));
                 output.present();
                 frame_count += 1;
