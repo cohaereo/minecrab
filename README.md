@@ -55,3 +55,7 @@ Every version has 3 degrees of support:
 - [ ] Input
   - [ ] Mouse input
   - [ ] Input settings
+
+## Credits
+- Mojang for making an amazing game
+- [wiki.vg](https://wiki.vg/Main_Page) for the protocol documentation
