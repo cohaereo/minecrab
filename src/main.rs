@@ -40,7 +40,6 @@ use winit::{
 mod ecs;
 mod fixed_point;
 mod net;
-mod nibble_slice;
 mod render;
 mod varint;
 mod world;
