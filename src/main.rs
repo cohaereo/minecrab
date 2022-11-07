@@ -13,7 +13,7 @@ use tokio::{net::TcpStream, sync::mpsc};
 use std::time::Instant;
 
 use clap::Parser;
-use glam::{DVec3, Mat4, Vec2, Vec3, Vec3Swizzles};
+use glam::{Mat4, Vec2, Vec3};
 use imgui::FontGlyphRanges;
 use wgpu::util::DeviceExt;
 use world::ChunkManager;
@@ -47,7 +47,6 @@ mod world;
 const ICON_MIN_FA: u32 = 0xe005;
 const ICON_MAX_FA: u32 = 0xf8ff;
 
-/// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
@@ -65,7 +64,6 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // GLOBAL.reset();
     pretty_env_logger::init();
 
     let args = CliArgs::parse();
@@ -127,7 +125,6 @@ async fn main() -> anyhow::Result<()> {
             }) => {
                 camera.position = Vec3::new(x as f32, y as f32, z as f32);
                 camera.orientation = Vec2::new(pitch, yaw);
-                // println!("Writing response");
                 write_tx
                     .send(net::packets::Packet::PlayerPositionLookClient {
                         x,
@@ -153,8 +150,8 @@ async fn main() -> anyhow::Result<()> {
     let write_tx_net = write_tx.clone();
     tokio::spawn(async move {
         'game: loop {
-            let p = MinecraftCodec::read(&mut conn_read).await.unwrap();
-            match decode_packet(&p) {
+            let rp = MinecraftCodec::read(&mut conn_read).await.unwrap();
+            match decode_packet(&rp) {
                 Ok(p) => match p {
                     net::packets::Packet::KeepAlive(t) => {
                         write_tx_net
@@ -209,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                     _ => {}
                 },
-                Err(e) => error!("Error decoding packet: {}", e),
+                Err(e) => error!("Error decoding packet 0x{:x}: {}", rp.id, e),
             }
         }
     });
@@ -451,12 +448,10 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|b| Some(b.as_str().to_string()))
         .unwrap_or("Unknown CPU".to_string());
 
-    let mut actual_player_pos = Vec3::default();
     let mut frame_count = 0;
     let mut last_frame = Instant::now();
     let mut chunks_rendered = 0;
     let mut total_chunks = 0;
-    let mut demo_open = true;
     let mut render_distance = 16;
     let mut chunklines_shown = false;
     event_loop.run(move |event, _, control_flow| {
@@ -519,12 +514,11 @@ async fn main() -> anyhow::Result<()> {
                     if let Ok(p) = main_rx.try_recv() {
                         match p {
                             net::packets::Packet::MapChunkBulk {
-                                columns,
                                 has_sky_light,
                                 data,
                                 meta,
+                                ..
                             } => {
-                                println!("Received {} chunks", columns);
                                 let mut data_offset = 0;
                                 for (_i, cm) in meta.iter().enumerate() {
                                     let bytes_read = chunks
@@ -660,16 +654,8 @@ async fn main() -> anyhow::Result<()> {
                                     world.despawn(eid).ok();
                                 }
                             }
-                            net::packets::Packet::PlayerPositionLookServer {
-                                x,
-                                y,
-                                z,
-                                yaw,
-                                pitch,
-                                on_ground,
-                            } => {
-                                actual_player_pos = Vec3::new(x as f32, y as f32, z as f32);
-                                camera.position = actual_player_pos;
+                            net::packets::Packet::PlayerPositionLookServer { x, y, z, .. } => {
+                                camera.position = Vec3::new(x as f32, y as f32, z as f32);
                             }
                             _ => {}
                         }

@@ -1,14 +1,14 @@
 use std::io::{Cursor, Read};
 
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use byteorder::{BigEndian, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 
 use crate::{
     fixed_point::FixedPoint,
     net::packets::{
-        BlockChangeRecord, ChunkMetadata, EntityModifier, EntityProperty, GameState, Packet,
-        PlayerProperty,
+        BlockChangeRecord, ChunkMetadata, EntityAnimation, EntityModifier, EntityProperty,
+        GameState, Packet, PlayerProperty, Slot,
     },
     varint::ReadProtoExt,
 };
@@ -36,6 +36,14 @@ pub fn decode_0x3<R: Read>(r: &mut R) -> Result<Packet> {
     Ok(Packet::TimeUpdate {
         world_age: r.read_i64::<BigEndian>()?,
         time_of_day: r.read_i64::<BigEndian>()?,
+    })
+}
+
+pub fn decode_0x4<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::EntityEquipment {
+        eid: r.read_i32::<BigEndian>()?,
+        slot: r.read_i16::<BigEndian>()?,
+        item: Slot::read(r)?,
     })
 }
 
@@ -77,6 +85,33 @@ pub fn decode_0x8<R: Read>(r: &mut R) -> Result<Packet> {
 
 pub fn decode_0x9<R: Read>(r: &mut R) -> Result<Packet> {
     Ok(Packet::HeldItemChangeServer(r.read_i8()?))
+}
+
+pub fn decode_0xa<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::UseBed {
+        eid: r.read_i32::<BigEndian>()?,
+        x: r.read_i32::<BigEndian>()?,
+        y: r.read_u8()?,
+        z: r.read_i32::<BigEndian>()?,
+    })
+}
+
+pub fn decode_0xb<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::EntityAnimation {
+        eid: r.read_varint()?,
+        anim: match r.read_u8()? {
+            0 => EntityAnimation::SwingArm,
+            1 => EntityAnimation::DamageAnimation,
+            2 => EntityAnimation::LeaveBed,
+            3 => EntityAnimation::EatFood,
+            4 => EntityAnimation::CriticalEffect,
+            5 => EntityAnimation::MagicCriticalEffect,
+            102 => EntityAnimation::Unknown,
+            104 => EntityAnimation::Crouch,
+            105 => EntityAnimation::Uncrouch,
+            _ => anyhow::bail!("Invalid EntityAnimation index"),
+        },
+    })
 }
 
 pub fn decode_0x12<R: Read>(r: &mut R) -> Result<Packet> {
@@ -152,10 +187,18 @@ pub fn decode_0x1a<R: Read>(r: &mut R) -> Result<Packet> {
     })
 }
 
+pub fn decode_0x1f<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::SetExperience {
+        experience_bar: r.read_f32::<BigEndian>()?,
+        level: r.read_i16::<BigEndian>()?,
+        total_experience: r.read_i16::<BigEndian>()?,
+    })
+}
+
 pub fn decode_0xc<R: Read>(r: &mut R) -> Result<Packet> {
     Ok(Packet::SpawnPlayer {
         eid: r.read_varint()?,
-        player_uuid: r.read_u128::<BigEndian>()?,
+        player_uuid: r.read_varstring()?,
         player_name: r.read_varstring()?,
         properties: (0..r.read_varint()?)
             .map(|_| PlayerProperty {
@@ -228,6 +271,17 @@ pub fn decode_0x23<R: Read>(r: &mut R) -> Result<Packet> {
     })
 }
 
+pub fn decode_0x28<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::Effect {
+        effect_id: r.read_i32::<BigEndian>()?,
+        x: r.read_i32::<BigEndian>()?,
+        y: r.read_u8()?,
+        z: r.read_i32::<BigEndian>()?,
+        data: r.read_i32::<BigEndian>()?,
+        disable_relative_volume: r.read_u8()? != 0,
+    })
+}
+
 pub fn decode_0x29<R: Read>(r: &mut R) -> Result<Packet> {
     Ok(Packet::SoundEffect {
         sound_name: r.read_varstring()?,
@@ -237,6 +291,16 @@ pub fn decode_0x29<R: Read>(r: &mut R) -> Result<Packet> {
         volume: r.read_f32::<BigEndian>()?,
         pitch: r.read_u8()?,
     })
+}
+
+pub fn decode_0x30<R: Read>(r: &mut R) -> Result<Packet> {
+    let mut slots = vec![];
+    let window_id = r.read_u8()?;
+
+    for _ in 0..r.read_i16::<BigEndian>()? {
+        slots.push(Slot::read(r)?);
+    }
+    Ok(Packet::WindowItems { window_id, slots })
 }
 
 pub fn decode_0x2b<R: Read>(r: &mut R) -> Result<Packet> {
@@ -255,6 +319,14 @@ pub fn decode_0x2b<R: Read>(r: &mut R) -> Result<Packet> {
         8 => GameState::FadeTime(value),
         _ => anyhow::bail!("Invalid GameState!"),
     }))
+}
+
+pub fn decode_0x2f<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::SetSlot {
+        window_id: r.read_u8()?,
+        slot: r.read_i16::<BigEndian>()?,
+        data: Slot::read(r)?,
+    })
 }
 
 pub fn decode_0x21<R: Read>(r: &mut R) -> Result<Packet> {
@@ -318,6 +390,32 @@ pub fn decode_0x26<R: Read>(r: &mut R) -> Result<Packet> {
         has_sky_light,
         data,
         meta,
+    })
+}
+
+pub fn decode_0x33<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::UpdateSign {
+        x: r.read_i32::<BigEndian>()?,
+        y: r.read_i16::<BigEndian>()?,
+        z: r.read_i32::<BigEndian>()?,
+        line1: r.read_varstring()?,
+        line2: r.read_varstring()?,
+        line3: r.read_varstring()?,
+        line4: r.read_varstring()?,
+    })
+}
+
+pub fn decode_0x35<R: Read>(r: &mut R) -> Result<Packet> {
+    Ok(Packet::UpdateBlockEntity {
+        x: r.read_i32::<BigEndian>()?,
+        y: r.read_i16::<BigEndian>()?,
+        z: r.read_i32::<BigEndian>()?,
+        action: r.read_u8()?,
+        data: if r.read_i16::<BigEndian>()? > 0 {
+            Some(nbt::Blob::from_gzip_reader(r)?)
+        } else {
+            None
+        },
     })
 }
 

@@ -1,3 +1,6 @@
+use std::io::{Cursor, Read};
+
+use anyhow::anyhow;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::varint::{ReadProtoExt, WriteProtoExt};
@@ -16,6 +19,19 @@ pub enum GameState {
     ArrowHittingPlayer,
     FadeValue(f32),
     FadeTime(f32),
+}
+
+#[derive(Debug)]
+pub enum EntityAnimation {
+    SwingArm = 0,
+    DamageAnimation = 1,
+    LeaveBed = 2,
+    EatFood = 3,
+    CriticalEffect = 4,
+    MagicCriticalEffect = 5,
+    Unknown = 102,
+    Crouch = 104,
+    Uncrouch = 105,
 }
 
 #[derive(Debug)]
@@ -54,6 +70,35 @@ pub struct PlayerProperty {
     pub name: String,
     pub value: String,
     pub signature: String,
+}
+
+#[derive(Debug, Default)]
+pub struct Slot {
+    pub item_id: i16,
+    pub item_count: Option<u8>,
+    pub item_damage: Option<i16>,
+    pub data: Option<nbt::Blob>,
+}
+
+impl Slot {
+    pub fn read<R: Read>(r: &mut R) -> anyhow::Result<Self> {
+        let mut s = Self {
+            item_id: r.read_i16::<BigEndian>()?,
+            ..Default::default()
+        };
+
+        if s.item_id != -1 {
+            s.item_count = Some(r.read_u8()?);
+            s.item_damage = Some(r.read_i16::<BigEndian>()?);
+
+            let nbt_length = r.read_i16::<BigEndian>()?;
+            if nbt_length != -1 {
+                s.data = Some(nbt::Blob::from_gzip_reader(r)?);
+            }
+        }
+
+        Ok(s)
+    }
 }
 
 impl BlockChangeRecord {
@@ -149,7 +194,6 @@ pub enum Packet {
         velocity_x: i16,
         velocity_y: i16,
         velocity_z: i16,
-        // TODO: Metadata
     },
 
     SpawnObject {
@@ -160,18 +204,19 @@ pub enum Packet {
         z: f64,
         yaw: u8,
         pitch: u8,
-        // TODO: Metadata
     },
 
     EntityProperties {
         eid: i32,
         properties: Vec<EntityProperty>,
     },
-    // EntityEquipment {
-    //     eid: i32,
-    //     slot: i16,
-    //     item: Slot,
-    // },
+
+    EntityEquipment {
+        eid: i32,
+        slot: i16,
+        item: Slot,
+    },
+
     EntityVelocity {
         eid: i32,
         x: i16,
@@ -268,6 +313,16 @@ pub enum Packet {
         level_type: String,
     },
 
+    UpdateSign {
+        x: i32,
+        y: i16,
+        z: i32,
+        line1: String,
+        line2: String,
+        line3: String,
+        line4: String,
+    },
+
     BlockChange {
         x: i32,
         y: u8,
@@ -284,7 +339,7 @@ pub enum Packet {
 
     SpawnPlayer {
         eid: i32,
-        player_uuid: u128,
+        player_uuid: String,
         player_name: String,
         properties: Vec<PlayerProperty>,
         x: f64,
@@ -295,6 +350,52 @@ pub enum Packet {
         current_item: i16,
         // TODO: metadata
     },
+
+    UseBed {
+        eid: i32,
+        x: i32,
+        y: u8,
+        z: i32,
+    },
+
+    EntityAnimation {
+        eid: i32,
+        anim: EntityAnimation,
+    },
+
+    Effect {
+        effect_id: i32,
+        x: i32,
+        y: u8,
+        z: i32,
+        data: i32,
+        disable_relative_volume: bool,
+    },
+
+    UpdateBlockEntity {
+        x: i32,
+        y: i16,
+        z: i32,
+        action: u8,
+        data: Option<nbt::Blob>,
+    },
+
+    SetSlot {
+        window_id: u8,
+        slot: i16,
+        data: Slot,
+    },
+
+    SetExperience {
+        experience_bar: f32,
+        level: i16,
+        total_experience: i16,
+    },
+
+    WindowItems {
+        window_id: u8,
+        slots: Vec<Slot>,
+    },
 }
 
 // TODO: Packets should be able to be encoded by struct definitions. Seeing as how this is rust, well....
@@ -302,16 +403,19 @@ pub enum Packet {
 
 pub fn decode_packet(p: &RawPacket) -> anyhow::Result<Packet> {
     let mut reader = std::io::Cursor::new(&p.data);
-    match p.id {
+    let r = match p.id {
         0x0 => play::decode_0x0(&mut reader),
         0x1 => play::decode_0x1(&mut reader),
         0x2 => play::decode_0x2(&mut reader),
         0x3 => play::decode_0x3(&mut reader),
+        0x4 => play::decode_0x4(&mut reader),
         0x5 => play::decode_0x5(&mut reader),
         0x6 => play::decode_0x6(&mut reader),
         0x7 => play::decode_0x7(&mut reader),
         0x8 => play::decode_0x8(&mut reader),
         0x9 => play::decode_0x9(&mut reader),
+        0xa => play::decode_0xa(&mut reader),
+        0xb => play::decode_0xb(&mut reader),
         0xc => play::decode_0xc(&mut reader),
         0xe => play::decode_0xe(&mut reader),
         0xf => play::decode_0xf(&mut reader),
@@ -322,21 +426,27 @@ pub fn decode_packet(p: &RawPacket) -> anyhow::Result<Packet> {
         0x17 => play::decode_0x17(&mut reader),
         0x18 => play::decode_0x18(&mut reader),
         0x19 => play::decode_0x19(&mut reader),
+        0x1a => play::decode_0x1a(&mut reader),
         0x1c => {
             trace!("0x1c IS STUBBED!!!!");
             Ok(Packet::EntityMetadata {
                 eid: reader.read_i32::<BigEndian>()?,
             })
         }
-        0x1a => play::decode_0x1a(&mut reader),
+        0x1f => play::decode_0x1f(&mut reader),
+        0x2b => play::decode_0x2b(&mut reader),
+        0x2f => play::decode_0x2f(&mut reader),
         0x20 => play::decode_0x20(&mut reader),
+        0x21 => play::decode_0x21(&mut reader),
         0x22 => play::decode_0x22(&mut reader),
         0x23 => play::decode_0x23(&mut reader),
-        0x29 => play::decode_0x29(&mut reader),
-        0x2b => play::decode_0x2b(&mut reader),
-        0x38 => play::decode_0x38(&mut reader),
-        0x21 => play::decode_0x21(&mut reader),
         0x26 => play::decode_0x26(&mut reader),
+        0x28 => play::decode_0x28(&mut reader),
+        0x29 => play::decode_0x29(&mut reader),
+        0x30 => play::decode_0x30(&mut reader),
+        0x33 => play::decode_0x33(&mut reader),
+        0x35 => play::decode_0x35(&mut reader),
+        0x38 => play::decode_0x38(&mut reader),
         // {
         //     println!("{} chunks", reader.read_i16::<BigEndian>()?);
         //     println!(
@@ -348,7 +458,23 @@ pub fn decode_packet(p: &RawPacket) -> anyhow::Result<Packet> {
         // }
         0x40 => Ok(Packet::Disconnect(reader.read_varstring()?)),
         _ => anyhow::bail!("Unhandled packet ID 0x{:x}", p.id),
+    };
+
+    if (reader.position() as usize) < p.data.len() {
+        // anyhow::bail!(
+        //     "Packet data overrun! Packet with ID 0x{:x} has {} bytes left!",
+        //     p.id,
+        //     (p.data.len() - reader.position() as usize)
+        // );
+
+        // warn!(
+        //     "Packet data overrun! Packet with ID 0x{:x} has {} bytes left!",
+        //     p.id,
+        //     (p.data.len() - reader.position() as usize)
+        // );
     }
+
+    r
 }
 
 pub fn encode_packet(p: &Packet) -> anyhow::Result<RawPacket> {

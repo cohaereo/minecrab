@@ -16,6 +16,7 @@ font-awesome = "0.2"
 futures = "0.3"
 glam = { version = "0.21", features = ["bytemuck"] }
 hecs = "0.9"
+hematite-nbt = "0.5.2"
 hex = "0.4"
 image = "0.24"
 imgui = "0.8"
