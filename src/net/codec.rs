@@ -19,7 +19,6 @@ impl MinecraftCodec {
         let len = read_varint(reader).await?;
         let id = read_varint(reader).await?;
 
-        // println!("Reading {} - {} bytes", len, varint_len(id));
         let mut data = vec![0u8; len as usize - varint_len(id)];
         reader.read_exact(&mut data).await?;
 
@@ -29,15 +28,13 @@ impl MinecraftCodec {
     }
 
     pub async fn write(writer: &mut OwnedWriteHalf, packet: &RawPacket) -> anyhow::Result<()> {
-        debug!("Writing {:?}", packet);
         let len = varint_len(packet.id) + packet.data.len();
 
         let mut buf = vec![];
         buf.write_varint(len as i32)?;
         buf.write_varint(packet.id)?;
-        std::io::Write::write_all(&mut buf, &packet.data);
+        std::io::Write::write_all(&mut buf, &packet.data)?;
 
-        // writer.write_all(&buf).await?;
         writer.try_write(&buf)?;
 
         Ok(())

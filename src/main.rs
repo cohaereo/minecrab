@@ -8,9 +8,13 @@ mod build_info {
     include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 }
 
+use flate2::read::ZlibDecoder;
 use tokio::{net::TcpStream, sync::mpsc};
 
-use std::time::Instant;
+use std::{
+    io::{Cursor, Read},
+    time::Instant,
+};
 
 use clap::Parser;
 use glam::{Mat4, Vec2, Vec3};
@@ -20,7 +24,8 @@ use world::ChunkManager;
 
 use crate::{
     ecs::{update_velocity, Position, Velocity},
-    net::{codec::MinecraftCodec, packets::decode_packet},
+    fixed_point::FixedPoint,
+    net::codec::MinecraftCodec,
     render::{
         chunk::{ChunkRenderData, ChunkRenderer},
         chunk_debug::DebugLineRenderer,
@@ -77,11 +82,14 @@ async fn main() -> anyhow::Result<()> {
             .await?
             .into_split();
 
-    let (write_tx, mut write_rx) = tokio::sync::mpsc::channel::<net::packets::Packet>(128);
+    let (write_tx, mut write_rx) =
+        tokio::sync::mpsc::channel::<(net::ClientState, net::packets::Packet)>(128);
     tokio::spawn(async move {
         loop {
-            if let Some(p) = write_rx.recv().await {
-                if let Ok(rp) = net::packets::encode_packet(&p) {
+            if let Some((state, p)) = write_rx.recv().await {
+                if let Ok(rp) =
+                    net::versions::v1_7_10::encode_packet(&p, state, net::PacketDirection::Server)
+                {
                     MinecraftCodec::write(&mut conn_write, &rp).await.unwrap();
                 }
             } else {
@@ -92,16 +100,26 @@ async fn main() -> anyhow::Result<()> {
     });
 
     write_tx
-        .send(net::packets::Packet::Handshake {
-            protocol_version: 5,
-            server_address: args.address,
-            server_port: args.port,
-            next_state: 2,
-        })
+        .send((
+            net::ClientState::Handshaking,
+            net::packets::Packet::SetProtocol(
+                net::packets::handshaking::serverbound::SetProtocol {
+                    protocol_version: varint::VarInt(5),
+                    server_host: args.address,
+                    server_port: args.port,
+                    next_state: varint::VarInt(2),
+                },
+            ),
+        ))
         .await?;
 
     write_tx
-        .send(net::packets::Packet::LoginStart(args.username))
+        .send((
+            net::ClientState::Login,
+            net::packets::Packet::LoginStart(net::packets::login::serverbound::LoginStart {
+                username: args.username,
+            }),
+        ))
         .await?;
 
     // Wait for login success
@@ -113,31 +131,41 @@ async fn main() -> anyhow::Result<()> {
     // Wait for player pos
 
     loop {
-        let p = MinecraftCodec::read(&mut conn_read).await?;
-        match decode_packet(&p) {
-            Ok(net::packets::Packet::PlayerPositionLookServer {
-                x,
-                y,
-                z,
-                yaw,
-                pitch,
-                on_ground,
-            }) => {
-                camera.position = Vec3::new(x as f32, y as f32, z as f32);
-                camera.orientation = Vec2::new(pitch, yaw);
+        let rp = MinecraftCodec::read(&mut conn_read).await?;
+
+        match net::versions::v1_7_10::decode_packet(
+            &rp,
+            net::ClientState::Play,
+            net::PacketDirection::Client,
+        ) {
+            Ok(net::packets::Packet::PositionClientbound(p)) => {
+                camera.position = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+                camera.orientation = Vec2::new(p.pitch, p.yaw);
                 write_tx
-                    .send(net::packets::Packet::PlayerPositionLookClient {
-                        x,
-                        feet_y: y - 1.62,
-                        head_y: y,
-                        z,
-                        yaw,
-                        pitch,
-                        on_ground,
-                    })
+                    .send((
+                        net::ClientState::Play,
+                        net::packets::Packet::PositionLook(
+                            net::packets::play::serverbound::PositionLook {
+                                x: p.x,
+                                stance: p.y - 1.62,
+                                y: p.y,
+                                z: p.z,
+                                yaw: p.yaw,
+                                pitch: p.pitch,
+                                on_ground: p.on_ground,
+                            },
+                        ),
+                    ))
                     .await?;
 
-                write_tx.send(net::packets::Packet::ClientStatus(0)).await?;
+                write_tx
+                    .send((
+                        net::ClientState::Play,
+                        net::packets::Packet::ClientCommand(
+                            net::packets::play::serverbound::ClientCommand { payload: 0 },
+                        ),
+                    ))
+                    .await?;
                 break;
             }
             _ => {}
@@ -151,57 +179,70 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         'game: loop {
             let rp = MinecraftCodec::read(&mut conn_read).await.unwrap();
-            match decode_packet(&rp) {
-                Ok(p) => match p {
-                    net::packets::Packet::KeepAlive(t) => {
+            match net::versions::v1_7_10::decode_packet(
+                &rp,
+                net::ClientState::Play,
+                net::PacketDirection::Client,
+            ) {
+                Ok(pp) => match pp {
+                    net::packets::Packet::KeepAliveClientbound(t) => {
                         write_tx_net
-                            .send(net::packets::Packet::KeepAlive(t))
+                            .send((
+                                net::ClientState::Play,
+                                net::packets::Packet::KeepAliveServerbound(
+                                    net::packets::play::serverbound::KeepAliveServerbound {
+                                        keep_alive_id: t.keep_alive_id,
+                                    },
+                                ),
+                            ))
                             .await
                             .unwrap();
                     }
-                    net::packets::Packet::PlayerPositionLookServer {
-                        x,
-                        y,
-                        z,
-                        yaw,
-                        pitch,
-                        on_ground,
-                    } => {
-                        main_tx.send(p).await.unwrap();
+                    net::packets::Packet::PositionClientbound(ref p) => {
+                        main_tx.send(pp.clone()).await.unwrap();
                         write_tx_net
-                            .send(net::packets::Packet::PlayerPositionLookClient {
-                                x,
-                                feet_y: y - 1.62,
-                                head_y: y,
-                                z,
-                                yaw,
-                                pitch,
-                                on_ground,
-                            })
+                            .send((
+                                net::ClientState::Play,
+                                net::packets::Packet::PositionLook(
+                                    net::packets::play::serverbound::PositionLook {
+                                        x: p.x,
+                                        stance: p.y - 1.62,
+                                        y: p.y,
+                                        z: p.z,
+                                        yaw: p.yaw,
+                                        pitch: p.pitch,
+                                        on_ground: p.on_ground,
+                                    },
+                                ),
+                            ))
                             .await
                             .unwrap();
                     }
-                    net::packets::Packet::Respawn { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::MapChunkBulk { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::ChunkData { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::BlockChange { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::DestroyEntities { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::EntityLookRelativeMove { .. } => {
-                        main_tx.send(p).await.unwrap()
+                    net::packets::Packet::Respawn { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::MapChunkBulk { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::MapChunk { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::BlockChange { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::EntityDestroy { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::EntityMoveLook { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::RelEntityMove { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::EntityVelocity { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::SpawnEntity { .. } => main_tx.send(pp).await.unwrap(),
+                    net::packets::Packet::ScoreboardScore(p) => println!("{:?}", p),
+                    net::packets::Packet::ScoreboardObjective(p) => println!("{:?}", p),
+                    net::packets::Packet::SpawnEntityLiving { .. } => {
+                        main_tx.send(pp).await.unwrap()
                     }
-                    net::packets::Packet::EntityRelativeMove { .. } => {
-                        main_tx.send(p).await.unwrap()
+                    net::packets::Packet::NamedEntitySpawn { .. } => {
+                        main_tx.send(pp).await.unwrap()
                     }
-                    net::packets::Packet::EntityVelocity { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::SpawnMob { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::SpawnObject { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::SpawnPlayer { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::MultiBlockChange { .. } => main_tx.send(p).await.unwrap(),
-                    net::packets::Packet::ChatMessage(s) => {
-                        info!("Chat message: {}", s);
+                    net::packets::Packet::MultiBlockChange { .. } => {
+                        main_tx.send(pp).await.unwrap()
                     }
-                    net::packets::Packet::Disconnect(reason) => {
-                        warn!("Disconnected: {}", reason);
+                    net::packets::Packet::ChatClientbound(p) => {
+                        info!("Chat message: {}", p.message);
+                    }
+                    net::packets::Packet::Disconnect(p) => {
+                        warn!("Disconnected: {}", p.reason);
                         break 'game;
                     }
                     _ => {}
@@ -513,20 +554,24 @@ async fn main() -> anyhow::Result<()> {
                 loop {
                     if let Ok(p) = main_rx.try_recv() {
                         match p {
-                            net::packets::Packet::MapChunkBulk {
-                                has_sky_light,
-                                data,
-                                meta,
-                                ..
-                            } => {
+                            net::packets::Packet::MapChunkBulk(p) => {
                                 let mut data_offset = 0;
-                                for (_i, cm) in meta.iter().enumerate() {
+                                let mut c = Cursor::new(&p.data);
+                                let mut z = ZlibDecoder::new(&mut c);
+
+                                let mut data = Vec::new();
+                                if z.read_to_end(&mut data).is_err() {
+                                    warn!("Chunk data failed to decompress");
+                                    continue;
+                                }
+
+                                for (_i, cm) in p.meta.iter().enumerate() {
                                     let bytes_read = chunks
                                         .load_chunk(
                                             (cm.chunk_x, cm.chunk_z),
                                             cm.primary_bitmap,
                                             cm.add_bitmap,
-                                            has_sky_light,
+                                            p.sky_light_sent,
                                             true,
                                             &data[data_offset..],
                                         )
@@ -538,21 +583,23 @@ async fn main() -> anyhow::Result<()> {
                                     warn!("Trailing data in chunk batch!");
                                 }
                             }
-                            net::packets::Packet::ChunkData {
-                                chunk_x,
-                                chunk_z,
-                                ground_up_continuous,
-                                primary_bitmap,
-                                add_bitmap,
-                                data,
-                            } => {
+                            net::packets::Packet::MapChunk(p) => {
+                                let mut c = Cursor::new(&p.compressed_chunk_data.data);
+                                let mut z = ZlibDecoder::new(&mut c);
+
+                                let mut data = Vec::new();
+                                if z.read_to_end(&mut data).is_err() {
+                                    warn!("Chunk data failed to decompress");
+                                    continue;
+                                }
+
                                 chunks
                                     .load_chunk(
-                                        (chunk_x, chunk_z),
-                                        primary_bitmap,
-                                        add_bitmap,
+                                        (p.x, p.z),
+                                        p.bit_map,
+                                        p.add_bit_map,
                                         false,
-                                        ground_up_continuous,
+                                        p.ground_up,
                                         &data,
                                     )
                                     .unwrap();
@@ -563,99 +610,105 @@ async fn main() -> anyhow::Result<()> {
                                 // Shrink to reclaim memory
                                 chunks.chunks.shrink_to_fit();
                             }
-                            net::packets::Packet::BlockChange {
-                                x, y, z, block_id, ..
-                            } => {
-                                chunks.set_block(x, y as i32, z, block_id as u8);
+                            net::packets::Packet::BlockChange(p) => {
+                                chunks.set_block(
+                                    p.location.x,
+                                    p.location.y as i32,
+                                    p.location.z,
+                                    p.kind.0 as u8,
+                                );
                             }
-                            net::packets::Packet::MultiBlockChange {
-                                chunk_x,
-                                chunk_z,
-                                records,
-                            } => {
-                                for r in records {
+                            net::packets::Packet::MultiBlockChange(p) => {
+                                for r in p.records {
                                     chunks.set_block(
-                                        chunk_x * 16 + r.x as i32,
+                                        p.chunk_x * 16 + r.x as i32,
                                         r.y as i32,
-                                        chunk_z * 16 + r.z as i32,
+                                        p.chunk_z * 16 + r.z as i32,
                                         r.block_id as u8,
                                     );
                                 }
                             }
-
-                            net::packets::Packet::EntityLookRelativeMove {
-                                eid,
-                                dx,
-                                dy,
-                                dz,
-                                ..
-                            } => {
-                                let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p, _v)) =
+                            net::packets::Packet::EntityMoveLook(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
+                                if let Ok((pos, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    p.0 += Vec3::new(dx as f32, dy as f32, dz as f32);
+                                    pos.0 += Vec3::new(
+                                        p.d_x.to_f64() as f32,
+                                        p.d_y.to_f64() as f32,
+                                        p.d_z.to_f64() as f32,
+                                    );
                                 }
                             }
-                            net::packets::Packet::EntityRelativeMove { eid, dx, dy, dz } => {
-                                let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p, _v)) =
+                            net::packets::Packet::RelEntityMove(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
+                                if let Ok((pos, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    p.0 += Vec3::new(dx as f32, dy as f32, dz as f32);
+                                    pos.0 += Vec3::new(
+                                        p.d_x.to_f64() as f32,
+                                        p.d_y.to_f64() as f32,
+                                        p.d_z.to_f64() as f32,
+                                    );
                                 }
                             }
-                            net::packets::Packet::EntityVelocity { eid, x, y, z } => {
-                                let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((_p, v)) =
+                            net::packets::Packet::EntityVelocity(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
+                                if let Ok((_pos, v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    v.0 = Vec3::new(x as f32, y as f32, z as f32)
-                                        * ecs::VELOCITY_UNIT;
-                                }
-                            }
-                            net::packets::Packet::SpawnMob {
-                                eid,
-                                x,
-                                y,
-                                z,
-                                velocity_x,
-                                velocity_y,
-                                velocity_z,
-                                ..
-                            } => {
-                                let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok((p, v)) =
-                                    world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
-                                {
-                                    p.0 = Vec3::new(x as f32, y as f32, z as f32);
                                     v.0 = Vec3::new(
-                                        velocity_x as f32,
-                                        velocity_y as f32,
-                                        velocity_z as f32,
+                                        p.velocity_x as f32,
+                                        p.velocity_y as f32,
+                                        p.velocity_z as f32,
                                     ) * ecs::VELOCITY_UNIT;
                                 }
                             }
-                            net::packets::Packet::SpawnObject { eid, x, y, z, .. } => {
-                                let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok(p) = world.query_one_mut::<&mut Position>(ent) {
-                                    p.0 = Vec3::new(x as f32, y as f32, z as f32);
+                            net::packets::Packet::SpawnEntityLiving(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                                if let Ok((pos, v)) =
+                                    world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
+                                {
+                                    pos.0 = Vec3::new(
+                                        p.x.to_f64() as f32,
+                                        p.y.to_f64() as f32,
+                                        p.z.to_f64() as f32,
+                                    );
+                                    v.0 = Vec3::new(
+                                        p.velocity_x as f32,
+                                        p.velocity_y as f32,
+                                        p.velocity_z as f32,
+                                    ) * ecs::VELOCITY_UNIT;
                                 }
                             }
-                            net::packets::Packet::SpawnPlayer { eid, x, y, z, .. } => {
-                                let ent = ecs::get_or_insert(&mut world, eid);
-                                if let Ok(p) = world.query_one_mut::<&mut Position>(ent) {
-                                    p.0 = Vec3::new(x as f32, y as f32, z as f32);
+                            net::packets::Packet::SpawnEntity(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                                if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
+                                    pos.0 = Vec3::new(
+                                        p.x.to_f64() as f32,
+                                        p.y.to_f64() as f32,
+                                        p.z.to_f64() as f32,
+                                    );
                                 }
                             }
-                            net::packets::Packet::DestroyEntities(entities) => {
-                                for e in entities {
+                            net::packets::Packet::NamedEntitySpawn(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                                if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
+                                    pos.0 = Vec3::new(
+                                        p.x.to_f64() as f32,
+                                        p.y.to_f64() as f32,
+                                        p.z.to_f64() as f32,
+                                    );
+                                }
+                            }
+                            net::packets::Packet::EntityDestroy(p) => {
+                                for e in p.entity_ids.data {
                                     let eid = ecs::get_or_insert(&mut world, e);
                                     world.despawn(eid).ok();
                                 }
                             }
-                            net::packets::Packet::PlayerPositionLookServer { x, y, z, .. } => {
-                                camera.position = Vec3::new(x as f32, y as f32, z as f32);
+                            net::packets::Packet::PositionClientbound(p) => {
+                                camera.position = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
                             }
                             _ => {}
                         }
@@ -715,15 +768,20 @@ async fn main() -> anyhow::Result<()> {
                 // FIXME: If you dont have vsync enabled (or a 60hz monitor) this is going to hurt
                 if frame_count % 3 == 0 {
                     write_tx
-                        .try_send(net::packets::Packet::PlayerPositionLookClient {
-                            x: camera.position.x as f64,
-                            feet_y: camera.position.y as f64 - 1.62,
-                            head_y: camera.position.y as f64,
-                            z: camera.position.z as f64,
-                            yaw: camera.orientation.y,
-                            pitch: camera.orientation.x,
-                            on_ground: false,
-                        })
+                        .try_send((
+                            net::ClientState::Play,
+                            net::packets::Packet::PositionLook(
+                                net::packets::play::serverbound::PositionLook {
+                                    x: camera.position.x as f64,
+                                    stance: camera.position.y as f64 - 1.62,
+                                    y: camera.position.y as f64,
+                                    z: camera.position.z as f64,
+                                    yaw: camera.orientation.y,
+                                    pitch: camera.orientation.x,
+                                    on_ground: false,
+                                },
+                            ),
+                        ))
                         .ok();
                 }
 

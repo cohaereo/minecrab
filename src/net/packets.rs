@@ -1,556 +1,560 @@
-use std::io::{Cursor, Read};
+use crate::packet_structs;
 
-use anyhow::anyhow;
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-
-use crate::varint::{ReadProtoExt, WriteProtoExt};
-
-use super::{codec::RawPacket, decoders::*};
-
-// TODO: better variants?
-#[derive(Debug)]
-pub enum GameState {
-    InvalidBed,
-    EndRaining,
-    BeginRaining,
-    ChangeGamemode(f32),
-    EnterCredits,
-    DemoMessages(f32),
-    ArrowHittingPlayer,
-    FadeValue(f32),
-    FadeTime(f32),
-}
-
-#[derive(Debug)]
-pub enum EntityAnimation {
-    SwingArm = 0,
-    DamageAnimation = 1,
-    LeaveBed = 2,
-    EatFood = 3,
-    CriticalEffect = 4,
-    MagicCriticalEffect = 5,
-    Unknown = 102,
-    Crouch = 104,
-    Uncrouch = 105,
-}
-
-#[derive(Debug)]
-pub struct EntityProperty {
-    pub key: String,
-    pub value: f64,
-    pub modifiers: Vec<EntityModifier>,
-}
-
-#[derive(Debug)]
-pub struct EntityModifier {
-    pub uuid: u128,
-    pub amount: f64,
-    pub operation: u8,
-}
-
-#[derive(Debug)]
-pub struct ChunkMetadata {
-    pub chunk_x: i32,
-    pub chunk_z: i32,
-    pub primary_bitmap: u16,
-    pub add_bitmap: u16,
-}
-
-#[derive(Debug)]
-pub struct BlockChangeRecord {
-    pub block_meta: u8,
-    pub block_id: u16,
-    pub y: u8,
-    pub z: u8,
-    pub x: u8,
-}
-
-#[derive(Debug)]
-pub struct PlayerProperty {
-    pub name: String,
-    pub value: String,
-    pub signature: String,
-}
-
-#[derive(Debug, Default)]
-pub struct Slot {
-    pub item_id: i16,
-    pub item_count: Option<u8>,
-    pub item_damage: Option<i16>,
-    pub data: Option<nbt::Blob>,
-}
-
-impl Slot {
-    pub fn read<R: Read>(r: &mut R) -> anyhow::Result<Self> {
-        let mut s = Self {
-            item_id: r.read_i16::<BigEndian>()?,
-            ..Default::default()
-        };
-
-        if s.item_id != -1 {
-            s.item_count = Some(r.read_u8()?);
-            s.item_damage = Some(r.read_i16::<BigEndian>()?);
-
-            let nbt_length = r.read_i16::<BigEndian>()?;
-            if nbt_length != -1 {
-                s.data = Some(nbt::Blob::from_gzip_reader(r)?);
+packet_structs! {
+    handshaking {
+        clientbound {
+        }
+        serverbound {
+            packet SetProtocol {
+                protocol_version: VarInt,
+                server_host: String,
+                server_port: u16,
+                next_state: VarInt,
+            }
+            packet LegacyServerListPing {
+                payload: u8,
             }
         }
-
-        Ok(s)
     }
-}
-
-impl BlockChangeRecord {
-    pub fn from_u32(v: u32) -> Self {
-        Self {
-            block_meta: (v & 0x0f) as u8,
-            block_id: ((v >> 4) & 0x0fff) as u16,
-            y: ((v >> 16) & 0xff) as u8,
-            z: ((v >> 24) & 0x0f) as u8,
-            x: ((v >> 28) & 0x0f) as u8,
+    status {
+        clientbound {
+            packet ServerInfo {
+                response: String,
+            }
+            packet PingClientbound {
+                time: i64,
+            }
+        }
+        serverbound {
+            packet PingStart {
+            }
+            packet PingServerbound {
+                time: i64,
+            }
         }
     }
-}
-
-#[derive(Debug)]
-pub enum Packet {
-    Handshake {
-        protocol_version: i32,
-        server_address: String,
-        server_port: u16,
-        next_state: i32,
-    },
-
-    LoginStart(String),
-
-    KeepAlive(i32),
-
-    ChatMessage(String),
-
-    SpawnPosition {
-        x: i32,
-        y: i32,
-        z: i32,
-    },
-
-    HeldItemChangeServer(i8),  // From server
-    HeldItemChangeClient(i16), // From client
-
-    PlayerPositionLookServer {
-        x: f64,
-        y: f64,
-        z: f64,
-        yaw: f32,
-        pitch: f32,
-        on_ground: bool,
-    },
-
-    PlayerPositionLookClient {
-        x: f64,
-        feet_y: f64,
-        head_y: f64,
-        z: f64,
-        yaw: f32,
-        pitch: f32,
-        on_ground: bool,
-    },
-
-    ChangeGameState(GameState),
-
-    TimeUpdate {
-        // These values are both in ticks
-        world_age: i64,
-        time_of_day: i64,
-    },
-
-    PlayerListItem {
-        player_name: String,
-        online: bool,
-        ping: i16,
-    },
-
-    JoinGame {
-        eid: i32,
-        gamemode: u8,
-        dimension: i8,
-        difficulty: u8,
-        max_players: u8,
-        level_type: String,
-    },
-
-    // TODO: Enum
-    ClientStatus(u8),
-
-    SpawnMob {
-        eid: i32,
-        mobtype: u8,
-        x: f64,
-        y: f64,
-        z: f64,
-        yaw: u8,
-        pitch: u8,
-        head_pitch: u8,
-        velocity_x: i16,
-        velocity_y: i16,
-        velocity_z: i16,
-    },
-
-    SpawnObject {
-        eid: i32,
-        objtype: u8,
-        x: f64,
-        y: f64,
-        z: f64,
-        yaw: u8,
-        pitch: u8,
-    },
-
-    EntityProperties {
-        eid: i32,
-        properties: Vec<EntityProperty>,
-    },
-
-    EntityEquipment {
-        eid: i32,
-        slot: i16,
-        item: Slot,
-    },
-
-    EntityVelocity {
-        eid: i32,
-        x: i16,
-        y: i16,
-        z: i16,
-    },
-
-    EntityHeadLook {
-        eid: i32,
-        head_yaw: u8,
-    },
-
-    EntityTeleport {
-        eid: i32,
-        x: f64,
-        y: f64,
-        z: f64,
-        yaw: u8,
-        pitch: u8,
-    },
-
-    EntityRelativeMove {
-        eid: i32,
-        dx: f64,
-        dy: f64,
-        dz: f64,
-    },
-
-    EntityLook {
-        eid: i32,
-        yaw: u8,
-        pitch: u8,
-    },
-
-    EntityLookRelativeMove {
-        eid: i32,
-        dx: f64,
-        dy: f64,
-        dz: f64,
-        yaw: u8,
-        pitch: u8,
-    },
-
-    DestroyEntities(Vec<i32>),
-
-    Disconnect(String),
-
-    EntityStatus {
-        eid: i32,
-        // TODO: Enum
-        status: u8,
-    },
-
-    UpdateHealth {
-        health: f32,
-        food: i16,
-        saturation: f32,
-    },
-
-    SoundEffect {
-        sound_name: String,
-        pos_x: i32,
-        pos_y: i32,
-        pos_z: i32,
-        volume: f32,
-        pitch: u8,
-    },
-
-    EntityMetadata {
-        eid: i32,
-        // TODO: the actual metadata
-    },
-
-    MapChunkBulk {
-        columns: i16,
-        has_sky_light: bool,
-        data: Vec<u8>,
-        meta: Vec<ChunkMetadata>,
-    },
-
-    ChunkData {
-        chunk_x: i32,
-        chunk_z: i32,
-        ground_up_continuous: bool,
-        primary_bitmap: u16,
-        add_bitmap: u16,
-        data: Vec<u8>,
-    },
-
-    Respawn {
-        dimension: i32,
-        difficulty: u8,
-        gamemode: u8,
-        level_type: String,
-    },
-
-    UpdateSign {
-        x: i32,
-        y: i16,
-        z: i32,
-        line1: String,
-        line2: String,
-        line3: String,
-        line4: String,
-    },
-
-    BlockChange {
-        x: i32,
-        y: u8,
-        z: i32,
-        block_id: i32,
-        block_meta: u8,
-    },
-
-    MultiBlockChange {
-        chunk_x: i32,
-        chunk_z: i32,
-        records: Vec<BlockChangeRecord>,
-    },
-
-    SpawnPlayer {
-        eid: i32,
-        player_uuid: String,
-        player_name: String,
-        properties: Vec<PlayerProperty>,
-        x: f64,
-        y: f64,
-        z: f64,
-        yaw: u8,
-        pitch: u8,
-        current_item: i16,
-        // TODO: metadata
-    },
-
-    UseBed {
-        eid: i32,
-        x: i32,
-        y: u8,
-        z: i32,
-    },
-
-    EntityAnimation {
-        eid: i32,
-        anim: EntityAnimation,
-    },
-
-    Effect {
-        effect_id: i32,
-        x: i32,
-        y: u8,
-        z: i32,
-        data: i32,
-        disable_relative_volume: bool,
-    },
-
-    UpdateBlockEntity {
-        x: i32,
-        y: i16,
-        z: i32,
-        action: u8,
-        data: Option<nbt::Blob>,
-    },
-
-    SetSlot {
-        window_id: u8,
-        slot: i16,
-        data: Slot,
-    },
-
-    SetExperience {
-        experience_bar: f32,
-        level: i16,
-        total_experience: i16,
-    },
-
-    WindowItems {
-        window_id: u8,
-        slots: Vec<Slot>,
-    },
-}
-
-// TODO: Packets should be able to be encoded by struct definitions. Seeing as how this is rust, well....
-// TODO: XYZ/Velocity should be a single struct?
-
-pub fn decode_packet(p: &RawPacket) -> anyhow::Result<Packet> {
-    let mut reader = std::io::Cursor::new(&p.data);
-    let r = match p.id {
-        0x0 => play::decode_0x0(&mut reader),
-        0x1 => play::decode_0x1(&mut reader),
-        0x2 => play::decode_0x2(&mut reader),
-        0x3 => play::decode_0x3(&mut reader),
-        0x4 => play::decode_0x4(&mut reader),
-        0x5 => play::decode_0x5(&mut reader),
-        0x6 => play::decode_0x6(&mut reader),
-        0x7 => play::decode_0x7(&mut reader),
-        0x8 => play::decode_0x8(&mut reader),
-        0x9 => play::decode_0x9(&mut reader),
-        0xa => play::decode_0xa(&mut reader),
-        0xb => play::decode_0xb(&mut reader),
-        0xc => play::decode_0xc(&mut reader),
-        0xe => play::decode_0xe(&mut reader),
-        0xf => play::decode_0xf(&mut reader),
-        0x12 => play::decode_0x12(&mut reader),
-        0x13 => play::decode_0x13(&mut reader),
-        0x15 => play::decode_0x15(&mut reader),
-        0x16 => play::decode_0x16(&mut reader),
-        0x17 => play::decode_0x17(&mut reader),
-        0x18 => play::decode_0x18(&mut reader),
-        0x19 => play::decode_0x19(&mut reader),
-        0x1a => play::decode_0x1a(&mut reader),
-        0x1c => {
-            trace!("0x1c IS STUBBED!!!!");
-            Ok(Packet::EntityMetadata {
-                eid: reader.read_i32::<BigEndian>()?,
-            })
+    login {
+        clientbound {
+            packet Disconnect {
+                reason: String,
+            }
+            packet EncryptionBeginClientbound {
+                server_id: String,
+                public_key: PrefixedVec<u8, i16>,
+                verify_token: PrefixedVec<u8, i16>,
+            }
+            packet Success {
+                uuid: String,
+                username: String,
+            }
         }
-        0x1f => play::decode_0x1f(&mut reader),
-        0x2b => play::decode_0x2b(&mut reader),
-        0x2f => play::decode_0x2f(&mut reader),
-        0x20 => play::decode_0x20(&mut reader),
-        0x21 => play::decode_0x21(&mut reader),
-        0x22 => play::decode_0x22(&mut reader),
-        0x23 => play::decode_0x23(&mut reader),
-        0x26 => play::decode_0x26(&mut reader),
-        0x28 => play::decode_0x28(&mut reader),
-        0x29 => play::decode_0x29(&mut reader),
-        0x30 => play::decode_0x30(&mut reader),
-        0x33 => play::decode_0x33(&mut reader),
-        0x35 => play::decode_0x35(&mut reader),
-        0x38 => play::decode_0x38(&mut reader),
-        // {
-        //     println!("{} chunks", reader.read_i16::<BigEndian>()?);
-        //     println!(
-        //         "{} data len (total {})",
-        //         reader.read_i32::<BigEndian>()?,
-        //         p.data.len()
-        //     );
-        //     anyhow::bail!("Chunkbatch");
-        // }
-        0x40 => Ok(Packet::Disconnect(reader.read_varstring()?)),
-        _ => anyhow::bail!("Unhandled packet ID 0x{:x}", p.id),
-    };
-
-    if (reader.position() as usize) < p.data.len() {
-        // anyhow::bail!(
-        //     "Packet data overrun! Packet with ID 0x{:x} has {} bytes left!",
-        //     p.id,
-        //     (p.data.len() - reader.position() as usize)
-        // );
-
-        // warn!(
-        //     "Packet data overrun! Packet with ID 0x{:x} has {} bytes left!",
-        //     p.id,
-        //     (p.data.len() - reader.position() as usize)
-        // );
+        serverbound {
+            packet LoginStart {
+                username: String,
+            }
+            packet EncryptionBeginServerbound {
+                shared_secret: PrefixedVec<u8, i16>,
+                verify_token: PrefixedVec<u8, i16>,
+            }
+        }
     }
+    play {
+        clientbound {
+            packet KeepAliveClientbound {
+                keep_alive_id: i32,
+            }
+            packet Login {
+                entity_id: i32,
+                game_mode: u8,
+                dimension: i8,
+                difficulty: u8,
+                max_players: u8,
+                level_type: String,
+            }
+            packet ChatClientbound {
+                message: String,
+            }
+            packet UpdateTime {
+                age: i64,
+                time: i64,
+            }
+            packet EntityEquipment {
+                entity_id: i32,
+                slot: i16,
+                item: Slot,
+            }
+            packet SpawnPosition {
+                location: PositionIII,
+            }
+            packet UpdateHealth {
+                health: f32,
+                food: i16,
+                food_saturation: f32,
+            }
+            packet Respawn {
+                dimension: i32,
+                difficulty: u8,
+                gamemode: u8,
+                level_type: String,
+            }
+            packet PositionClientbound {
+                x: f64,
+                y: f64,
+                z: f64,
+                yaw: f32,
+                pitch: f32,
+                on_ground: bool,
+            }
+            packet HeldItemSlotClientbound {
+                slot: i8,
+            }
+            packet Bed {
+                entity_id: i32,
+                location: PositionIBI,
+            }
+            packet Animation {
+                entity_id: VarInt,
+                animation: u8,
+            }
+            packet NamedEntitySpawn {
+                entity_id: VarInt,
+                player_u_u_i_d: String,
+                player_name: String,
+                data: PrefixedVec<EntitySpawnProperty, VarInt>,
+                x: i32,
+                y: i32,
+                z: i32,
+                yaw: i8,
+                pitch: i8,
+                current_item: i16,
+                metadata: EntityMeta,
+            }
+            packet Collect {
+                collected_entity_id: i32,
+                collector_entity_id: i32,
+            }
+            packet SpawnEntity {
+                entity_id: VarInt,
+                kind: i8,
+                x: i32,
+                y: i32,
+                z: i32,
+                pitch: i8,
+                yaw: i8,
 
-    r
-}
-
-pub fn encode_packet(p: &Packet) -> anyhow::Result<RawPacket> {
-    match p {
-        Packet::LoginStart(username) => {
-            let mut rp = RawPacket {
-                id: 0,
-                data: vec![],
-            };
-
-            rp.data.write_varstring(username)?;
-
-            Ok(rp)
+                // TODO: Object data
+                // object_data: ['container', [{'name': 'intField', 'type': 'i32'}, {'name': 'velocityX', 'type': ['switch', {'compareTo': 'intField', 'fields': {'0': 'void'}, 'default': 'i16'}]}, {'name': 'velocityY', 'type': ['switch', {'compareTo': 'intField', 'fields': {'0': 'void'}, 'default': 'i16'}]}, {'name': 'velocityZ', 'type': ['switch', {'compareTo': 'intField', 'fields': {'0': 'void'}, 'default': 'i16'}]}]],
+            }
+            packet SpawnEntityLiving {
+                entity_id: VarInt,
+                kind: u8,
+                x: i32,
+                y: i32,
+                z: i32,
+                yaw: i8,
+                pitch: i8,
+                head_pitch: i8,
+                velocity_x: i16,
+                velocity_y: i16,
+                velocity_z: i16,
+                metadata: EntityMeta,
+            }
+            packet SpawnEntityPainting {
+                entity_id: VarInt,
+                title: String,
+                location: PositionIII,
+                direction: i32,
+            }
+            packet SpawnEntityExperienceOrb {
+                entity_id: VarInt,
+                x: i32,
+                y: i32,
+                z: i32,
+                count: i16,
+            }
+            packet EntityVelocity {
+                entity_id: i32,
+                velocity_x: i16,
+                velocity_y: i16,
+                velocity_z: i16,
+            }
+            packet EntityDestroy {
+                entity_ids: PrefixedVec<i32, i8>,
+            }
+            packet Entity {
+                entity_id: i32,
+            }
+            packet RelEntityMove {
+                entity_id: i32,
+                d_x: i8,
+                d_y: i8,
+                d_z: i8,
+            }
+            packet EntityLook {
+                entity_id: i32,
+                yaw: i8,
+                pitch: i8,
+            }
+            packet EntityMoveLook {
+                entity_id: i32,
+                d_x: i8,
+                d_y: i8,
+                d_z: i8,
+                yaw: i8,
+                pitch: i8,
+            }
+            packet EntityTeleport {
+                entity_id: i32,
+                x: i32,
+                y: i32,
+                z: i32,
+                yaw: i8,
+                pitch: i8,
+            }
+            packet EntityHeadRotation {
+                entity_id: i32,
+                head_yaw: i8,
+            }
+            packet EntityStatus {
+                entity_id: i32,
+                entity_status: i8,
+            }
+            packet AttachEntity {
+                entity_id: i32,
+                vehicle_id: i32,
+                leash: bool,
+            }
+            packet EntityMetadata {
+                entity_id: i32,
+                metadata: EntityMeta,
+            }
+            packet EntityEffect {
+                entity_id: i32,
+                effect_id: i8,
+                amplifier: i8,
+                duration: i16,
+            }
+            packet RemoveEntityEffect {
+                entity_id: i32,
+                effect_id: i8,
+            }
+            packet Experience {
+                experience_bar: f32,
+                level: i16,
+                total_experience: i16,
+            }
+            // packet UpdateAttributes {
+            //     entity_id: i32,
+            // TODO: Properties
+            //     properties: ['array', {'countType': 'i32', 'type': ['container', [{'name': 'key', 'type': 'String'}, {'name': 'value', 'type': 'f64'}, {'name': 'modifiers', 'type': ['array', {'countType': 'i16', 'type': ['container', [{'name': 'uuid', 'type': 'UUID'}, {'name': 'amount', 'type': 'f64'}, {'name': 'operation', 'type': 'i8'}]]}]}]]}],
+            // }
+            packet MapChunk {
+                x: i32,
+                z: i32,
+                ground_up: bool,
+                bit_map: u16,
+                add_bit_map: u16,
+                compressed_chunk_data: PrefixedVec<u8, i32>,
+            }
+            packet MultiBlockChange {
+                chunk_x: i32,
+                chunk_z: i32,
+                record_count: i16,
+                data_length: i32,
+                records: Vec<BlockChangeRecord> > vec(record_count),
+                // record_count: ['count', {'type': 'i16', 'countFor': 'records'}],
+                // data_length: i32,
+                // records: ['array', {'count': 'recordCount', 'type': ['container', [{'anon': True, 'type': ['bitfield', [{'name': 'metadata', 'size': 4, 'signed': False}, {'name': 'blockId', 'size': 12, 'signed': False}]]}, {'name': 'y', 'type': 'u8'}, {'anon': True, 'type': ['bitfield', [{'name': 'z', 'size': 4, 'signed': False}, {'name': 'x', 'size': 4, 'signed': False}]]}]]}],
+            }
+            packet BlockChange {
+                location: PositionIBI,
+                kind: VarInt,
+                metadata: u8,
+            }
+            packet BlockAction {
+                location: PositionISI,
+                byte1: u8,
+                byte2: u8,
+                block_id: VarInt,
+            }
+            packet BlockBreakAnimation {
+                entity_id: VarInt,
+                location: PositionIII,
+                destroy_stage: i8,
+            }
+            packet MapChunkBulk {
+                column_count: i16,
+                data_length: i32,
+                sky_light_sent: bool,
+                data: Vec<u8> > vec(data_length),
+                meta: Vec<ChunkMetadata> > vec(column_count),
+            }
+            // packet Explosion {
+            //     x: f32,
+            //     y: f32,
+            //     z: f32,
+            //     radius: f32,
+            //     affected_block_offsets: ['array', {'countType': 'i32', 'type': ['container', [{'name': 'x', 'type': 'i8'}, {'name': 'y', 'type': 'i8'}, {'name': 'z', 'type': 'i8'}]]}],
+            //     player_motion_x: f32,
+            //     player_motion_y: f32,
+            //     player_motion_z: f32,
+            // }
+            packet WorldEvent {
+                effect_id: i32,
+                location: PositionIBI,
+                data: i32,
+                global: bool,
+            }
+            packet NamedSoundEffect {
+                sound_name: String,
+                x: i32,
+                y: i32,
+                z: i32,
+                volume: f32,
+                pitch: u8,
+            }
+            packet WorldParticles {
+                particle_name: String,
+                x: f32,
+                y: f32,
+                z: f32,
+                offset_x: f32,
+                offset_y: f32,
+                offset_z: f32,
+                particle_data: f32,
+                particles: i32,
+            }
+            packet GameStateChange {
+                reason: u8,
+                game_mode: f32,
+            }
+            packet SpawnEntityWeather {
+                entity_id: VarInt,
+                kind: i8,
+                x: i32,
+                y: i32,
+                z: i32,
+            }
+            packet OpenWindow {
+                window_id: u8,
+                inventory_type: u8,
+                window_title: String,
+                slot_count: u8,
+                use_provided_title: bool,
+                entity_id: Option<i32> > when(|p: &OpenWindow| p.inventory_type == 11),
+            }
+            packet CloseWindowClientbound {
+                window_id: u8,
+            }
+            packet SetSlot {
+                window_id: i8,
+                slot: i16,
+                item: Slot,
+            }
+            packet WindowItems {
+                window_id: u8,
+                items: PrefixedVec<Slot, i16>,
+            }
+            packet CraftProgressBar {
+                window_id: u8,
+                property: i16,
+                value: i16,
+            }
+            packet ConfirmTransactionClientbound {
+                window_id: u8,
+                action: i16,
+                accepted: bool,
+            }
+            packet UpdateSignClientBound {
+                location: PositionISI,
+                text1: String,
+                text2: String,
+                text3: String,
+                text4: String,
+            }
+            packet Map {
+                item_damage: VarInt,
+                data: PrefixedVec<u8, i16>,
+            }
+            // packet TileEntityData {
+            //     location: PositionISI,
+            //     action: u8,
+            //     nbt_data: compressedNbt,
+            // }
+            packet OpenSignEntity {
+                location: PositionIII,
+            }
+            // packet Statistics {
+            //     entries: ['array', {'countType': 'VarInt', 'type': ['container', [{'name': 'name', 'type': 'String'}, {'name': 'value', 'type': 'VarInt'}]]}],
+            // }
+            packet PlayerInfo {
+                player_name: String,
+                online: bool,
+                ping: i16,
+            }
+            packet AbilitiesClientbound {
+                flags: i8,
+                flying_speed: f32,
+                walking_speed: f32,
+            }
+            packet TabCompleteClientbound {
+                matches: PrefixedVec<String, VarInt>,
+            }
+            packet ScoreboardObjective {
+                name: String,
+                display_text: String,
+                action: i8,
+            }
+            packet ScoreboardScore {
+                item_name: String,
+                action: i8,
+                score_name: Option<String> > when(|p: &ScoreboardScore| p.action != 1),
+                value: Option<i32> > when(|p: &ScoreboardScore| p.action != 1),
+            }
+            packet ScoreboardDisplayObjective {
+                position: i8,
+                name: String,
+            }
+            // packet ScoreboardTeam {
+            //     team: String,
+            //     mode: i8,
+            //     name: ['switch', {'compareTo': 'mode', 'fields': {'0': 'String', '2': 'String'}, 'default': 'void'}],
+            //     prefix: ['switch', {'compareTo': 'mode', 'fields': {'0': 'String', '2': 'String'}, 'default': 'void'}],
+            //     suffix: ['switch', {'compareTo': 'mode', 'fields': {'0': 'String', '2': 'String'}, 'default': 'void'}],
+            //     friendly_fire: ['switch', {'compareTo': 'mode', 'fields': {'0': 'i8', '2': 'i8'}, 'default': 'void'}],
+            //     players: ['switch', {'compareTo': 'mode', 'fields': {'0': ['array', {'countType': 'i16', 'type': 'String'}], '3': ['array', {'countType': 'i16', 'type': 'String'}], '4': ['array', {'countType': 'i16', 'type': 'String'}]}, 'default': 'void'}],
+            // }
+            packet CustomPayloadClientbound {
+                channel: String,
+                data: PrefixedVec<u8, i16>,
+            }
+            packet KickDisconnect {
+                reason: String,
+            }
         }
-        Packet::Handshake {
-            protocol_version,
-            server_address,
-            server_port,
-            next_state,
-        } => {
-            let mut rp = RawPacket {
-                id: 0,
-                data: vec![],
-            };
-
-            rp.data.write_varint(*protocol_version)?;
-            rp.data.write_varstring(server_address)?;
-            rp.data.write_u16::<BigEndian>(*server_port)?;
-            rp.data.write_varint(*next_state)?;
-
-            Ok(rp)
+        serverbound {
+            packet KeepAliveServerbound {
+                keep_alive_id: i32,
+            }
+            packet ChatServerbound {
+                message: String,
+            }
+            packet UseEntity {
+                target: i32,
+                mouse: i8,
+                x: Option<f32> > when(|p: &UseEntity| p.mouse == 2),
+                y: Option<f32> > when(|p: &UseEntity| p.mouse == 2),
+                z: Option<f32> > when(|p: &UseEntity| p.mouse == 2),
+            }
+            packet Flying {
+                on_ground: bool,
+            }
+            packet PositionServerbound {
+                x: f64,
+                stance: f64,
+                y: f64,
+                z: f64,
+                on_ground: bool,
+            }
+            packet Look {
+                yaw: f32,
+                pitch: f32,
+                on_ground: bool,
+            }
+            packet PositionLook {
+                x: f64,
+                stance: f64,
+                y: f64,
+                z: f64,
+                yaw: f32,
+                pitch: f32,
+                on_ground: bool,
+            }
+            packet BlockDig {
+                status: i8,
+                location: PositionIBI,
+                face: i8,
+            }
+            packet BlockPlace {
+                location: PositionIBI,
+                direction: i8,
+                held_item: Slot,
+                cursor_x: i8,
+                cursor_y: i8,
+                cursor_z: i8,
+            }
+            packet HeldItemSlot {
+                slot_id: i16,
+            }
+            packet ArmAnimation {
+                entity_id: i32,
+                animation: i8,
+            }
+            packet EntityAction {
+                entity_id: i32,
+                action_id: i8,
+                jump_boost: i32,
+            }
+            packet SteerVehicle {
+                sideways: f32,
+                forward: f32,
+                jump: bool,
+                unmount: bool,
+            }
+            packet CloseWindow {
+                window_id: u8,
+            }
+            packet WindowClick {
+                window_id: i8,
+                slot: i16,
+                mouse_button: i8,
+                action: i16,
+                mode: i8,
+                item: Slot,
+            }
+            packet CompleteTransactionServerbound {
+                window_id: i8,
+                action: i16,
+                accepted: bool,
+            }
+            packet SetCreativeSlot {
+                slot: i16,
+                item: Slot,
+            }
+            packet EnchantItem {
+                window_id: i8,
+                enchantment: i8,
+            }
+            packet UpdateSignServerbound {
+                location: PositionISI,
+                text1: String,
+                text2: String,
+                text3: String,
+                text4: String,
+            }
+            packet AbilitiesServerbound {
+                flags: i8,
+                flying_speed: f32,
+                walking_speed: f32,
+            }
+            packet TabCompleteServerbound {
+                text: String,
+            }
+            packet Settings {
+                locale: String,
+                view_distance: i8,
+                chat_flags: i8,
+                chat_colors: bool,
+                difficulty: u8,
+                show_cape: bool,
+            }
+            packet ClientCommand {
+                payload: i8,
+            }
+            packet CustomPayloadServerbound {
+                channel: String,
+                data: PrefixedVec<u8, i16>,
+            }
         }
-        Packet::ChatMessage(s) => {
-            let mut rp = RawPacket {
-                id: 1,
-                data: vec![],
-            };
-
-            rp.data.write_varstring(s)?;
-
-            Ok(rp)
-        }
-        Packet::PlayerPositionLookClient {
-            x,
-            feet_y,
-            head_y,
-            z,
-            yaw,
-            pitch,
-            on_ground,
-        } => {
-            let mut rp = RawPacket {
-                id: 6,
-                data: vec![],
-            };
-
-            rp.data.write_f64::<BigEndian>(*x)?;
-            rp.data.write_f64::<BigEndian>(*feet_y)?;
-            rp.data.write_f64::<BigEndian>(*head_y)?;
-            rp.data.write_f64::<BigEndian>(*z)?;
-            rp.data.write_f32::<BigEndian>(*yaw)?;
-            rp.data.write_f32::<BigEndian>(*pitch)?;
-            rp.data.write_u8(if *on_ground { 1 } else { 0 })?;
-
-            Ok(rp)
-        }
-        Packet::ClientStatus(s) => {
-            let mut rp = RawPacket {
-                id: 0x16,
-                data: vec![],
-            };
-
-            rp.data.write_u8(*s)?;
-
-            Ok(rp)
-        }
-        _ => anyhow::bail!("No match arm to encode packet {:?}!", p),
     }
 }

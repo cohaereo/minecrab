@@ -1,8 +1,11 @@
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use std::fmt::Debug;
 use std::io;
 use std::io::{Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+
+use crate::net::packet_helpers::Serializable;
 
 pub trait ReadProtoExt: Read {
     fn read_varint(&mut self) -> anyhow::Result<i32> {
@@ -105,4 +108,36 @@ pub async fn write_varstring(writer: &mut OwnedWriteHalf, value: &str) -> anyhow
     write_varint(writer, value.len() as i32).await?;
     writer.write_all(value.as_bytes()).await?;
     Ok(())
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct VarInt(pub i32);
+
+impl Into<i32> for VarInt {
+    fn into(self) -> i32 {
+        self.0
+    }
+}
+
+impl Serializable for VarInt {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(VarInt(r.read_varint()?))
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        w.write_varint(self.0)?;
+        Ok(())
+    }
+}
+
+impl Debug for VarInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+impl Into<isize> for VarInt {
+    fn into(self) -> isize {
+        self.0 as isize
+    }
 }
