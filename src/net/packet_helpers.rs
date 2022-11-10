@@ -208,10 +208,12 @@ serializable_primitive_impl!(u8, read_u8, write_u8, singlebyte);
 serializable_primitive_impl!(u16, read_u16, write_u16, multibyte);
 serializable_primitive_impl!(u32, read_u32, write_u32, multibyte);
 serializable_primitive_impl!(u64, read_u64, write_u64, multibyte);
+serializable_primitive_impl!(u128, read_u128, write_u128, multibyte);
 serializable_primitive_impl!(i8, read_i8, write_i8, singlebyte);
 serializable_primitive_impl!(i16, read_i16, write_i16, multibyte);
 serializable_primitive_impl!(i32, read_i32, write_i32, multibyte);
 serializable_primitive_impl!(i64, read_i64, write_i64, multibyte);
+serializable_primitive_impl!(i128, read_i128, write_i128, multibyte);
 serializable_primitive_impl!(f32, read_f32, write_f32, multibyte);
 serializable_primitive_impl!(f64, read_f64, write_f64, multibyte);
 

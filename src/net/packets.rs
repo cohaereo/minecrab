@@ -121,9 +121,9 @@ packet_structs! {
                 player_u_u_i_d: String,
                 player_name: String,
                 data: PrefixedVec<EntitySpawnProperty, VarInt>,
-                x: i32,
-                y: i32,
-                z: i32,
+                x: FixedPoint32,
+                y: FixedPoint32,
+                z: FixedPoint32,
                 yaw: i8,
                 pitch: i8,
                 current_item: i16,
@@ -136,21 +136,19 @@ packet_structs! {
             packet SpawnEntity {
                 entity_id: VarInt,
                 kind: i8,
-                x: i32,
-                y: i32,
-                z: i32,
+                x: FixedPoint32,
+                y: FixedPoint32,
+                z: FixedPoint32,
                 pitch: i8,
                 yaw: i8,
-
-                // TODO: Object data
-                // object_data: ['container', [{'name': 'intField', 'type': 'i32'}, {'name': 'velocityX', 'type': ['switch', {'compareTo': 'intField', 'fields': {'0': 'void'}, 'default': 'i16'}]}, {'name': 'velocityY', 'type': ['switch', {'compareTo': 'intField', 'fields': {'0': 'void'}, 'default': 'i16'}]}, {'name': 'velocityZ', 'type': ['switch', {'compareTo': 'intField', 'fields': {'0': 'void'}, 'default': 'i16'}]}]],
+                data: ObjectData,
             }
             packet SpawnEntityLiving {
                 entity_id: VarInt,
                 kind: u8,
-                x: i32,
-                y: i32,
-                z: i32,
+                x: FixedPoint32,
+                y: FixedPoint32,
+                z: FixedPoint32,
                 yaw: i8,
                 pitch: i8,
                 head_pitch: i8,
@@ -167,9 +165,9 @@ packet_structs! {
             }
             packet SpawnEntityExperienceOrb {
                 entity_id: VarInt,
-                x: i32,
-                y: i32,
-                z: i32,
+                x: FixedPoint32,
+                y: FixedPoint32,
+                z: FixedPoint32,
                 count: i16,
             }
             packet EntityVelocity {
@@ -186,9 +184,9 @@ packet_structs! {
             }
             packet RelEntityMove {
                 entity_id: i32,
-                d_x: i8,
-                d_y: i8,
-                d_z: i8,
+                d_x: FixedPoint8,
+                d_y: FixedPoint8,
+                d_z: FixedPoint8,
             }
             packet EntityLook {
                 entity_id: i32,
@@ -197,17 +195,17 @@ packet_structs! {
             }
             packet EntityMoveLook {
                 entity_id: i32,
-                d_x: i8,
-                d_y: i8,
-                d_z: i8,
+                d_x: FixedPoint8,
+                d_y: FixedPoint8,
+                d_z: FixedPoint8,
                 yaw: i8,
                 pitch: i8,
             }
             packet EntityTeleport {
                 entity_id: i32,
-                x: i32,
-                y: i32,
-                z: i32,
+                x: FixedPoint32,
+                y: FixedPoint32,
+                z: FixedPoint32,
                 yaw: i8,
                 pitch: i8,
             }
@@ -243,11 +241,10 @@ packet_structs! {
                 level: i16,
                 total_experience: i16,
             }
-            // packet UpdateAttributes {
-            //     entity_id: i32,
-            // TODO: Properties
-            //     properties: ['array', {'countType': 'i32', 'type': ['container', [{'name': 'key', 'type': 'String'}, {'name': 'value', 'type': 'f64'}, {'name': 'modifiers', 'type': ['array', {'countType': 'i16', 'type': ['container', [{'name': 'uuid', 'type': 'UUID'}, {'name': 'amount', 'type': 'f64'}, {'name': 'operation', 'type': 'i8'}]]}]}]]}],
-            // }
+            packet UpdateAttributes {
+                entity_id: i32,
+                properties: PrefixedVec<EntityProperty, i32>,
+            }
             packet MapChunk {
                 x: i32,
                 z: i32,
@@ -262,9 +259,6 @@ packet_structs! {
                 record_count: i16,
                 data_length: i32,
                 records: Vec<BlockChangeRecord> > vec(record_count),
-                // record_count: ['count', {'type': 'i16', 'countFor': 'records'}],
-                // data_length: i32,
-                // records: ['array', {'count': 'recordCount', 'type': ['container', [{'anon': True, 'type': ['bitfield', [{'name': 'metadata', 'size': 4, 'signed': False}, {'name': 'blockId', 'size': 12, 'signed': False}]]}, {'name': 'y', 'type': 'u8'}, {'anon': True, 'type': ['bitfield', [{'name': 'z', 'size': 4, 'signed': False}, {'name': 'x', 'size': 4, 'signed': False}]]}]]}],
             }
             packet BlockChange {
                 location: PositionIBI,
@@ -289,16 +283,16 @@ packet_structs! {
                 data: Vec<u8> > vec(data_length),
                 meta: Vec<ChunkMetadata> > vec(column_count),
             }
-            // packet Explosion {
-            //     x: f32,
-            //     y: f32,
-            //     z: f32,
-            //     radius: f32,
-            //     affected_block_offsets: ['array', {'countType': 'i32', 'type': ['container', [{'name': 'x', 'type': 'i8'}, {'name': 'y', 'type': 'i8'}, {'name': 'z', 'type': 'i8'}]]}],
-            //     player_motion_x: f32,
-            //     player_motion_y: f32,
-            //     player_motion_z: f32,
-            // }
+            packet Explosion {
+                x: f32,
+                y: f32,
+                z: f32,
+                radius: f32,
+                affected_block_offsets: PrefixedVec<ExplosionRecord, i32>,
+                player_motion_x: f32,
+                player_motion_y: f32,
+                player_motion_z: f32,
+            }
             packet WorldEvent {
                 effect_id: i32,
                 location: PositionIBI,
@@ -331,9 +325,9 @@ packet_structs! {
             packet SpawnEntityWeather {
                 entity_id: VarInt,
                 kind: i8,
-                x: i32,
-                y: i32,
-                z: i32,
+                x: FixedPoint32,
+                y: FixedPoint32,
+                z: FixedPoint32,
             }
             packet OpenWindow {
                 window_id: u8,
@@ -376,17 +370,18 @@ packet_structs! {
                 item_damage: VarInt,
                 data: PrefixedVec<u8, i16>,
             }
-            // packet TileEntityData {
-            //     location: PositionISI,
-            //     action: u8,
-            //     nbt_data: compressedNbt,
-            // }
+            packet TileEntityData {
+                location: PositionISI,
+                action: u8,
+                data_length: i16,
+                nbt_data: CompressedGzData<nbt::Blob>,
+            }
             packet OpenSignEntity {
                 location: PositionIII,
             }
-            // packet Statistics {
-            //     entries: ['array', {'countType': 'VarInt', 'type': ['container', [{'name': 'name', 'type': 'String'}, {'name': 'value', 'type': 'VarInt'}]]}],
-            // }
+            packet Statistics {
+                entries: PrefixedVec<StatisticsEntry, VarInt>,
+            }
             packet PlayerInfo {
                 player_name: String,
                 online: bool,
@@ -415,15 +410,15 @@ packet_structs! {
                 position: i8,
                 name: String,
             }
-            // packet ScoreboardTeam {
-            //     team: String,
-            //     mode: i8,
-            //     name: ['switch', {'compareTo': 'mode', 'fields': {'0': 'String', '2': 'String'}, 'default': 'void'}],
-            //     prefix: ['switch', {'compareTo': 'mode', 'fields': {'0': 'String', '2': 'String'}, 'default': 'void'}],
-            //     suffix: ['switch', {'compareTo': 'mode', 'fields': {'0': 'String', '2': 'String'}, 'default': 'void'}],
-            //     friendly_fire: ['switch', {'compareTo': 'mode', 'fields': {'0': 'i8', '2': 'i8'}, 'default': 'void'}],
-            //     players: ['switch', {'compareTo': 'mode', 'fields': {'0': ['array', {'countType': 'i16', 'type': 'String'}], '3': ['array', {'countType': 'i16', 'type': 'String'}], '4': ['array', {'countType': 'i16', 'type': 'String'}]}, 'default': 'void'}],
-            // }
+            packet ScoreboardTeam {
+                team: String,
+                action: i8,
+                name: Option<String> > when(|p: &ScoreboardTeam| p.action == 0 || p.action == 2),
+                prefix: Option<String> > when(|p: &ScoreboardTeam| p.action == 0 || p.action == 2),
+                suffix: Option<String> > when(|p: &ScoreboardTeam| p.action == 0 || p.action == 2),
+                friendly_fire: Option<i8> > when(|p: &ScoreboardTeam| p.action == 0 || p.action == 2),
+                players: Option<PrefixedVec<String, i16>> > when(|p: &ScoreboardTeam| p.action == 0 || p.action == 3 || p.action == 4),
+            }
             packet CustomPayloadClientbound {
                 channel: String,
                 data: PrefixedVec<u8, i16>,

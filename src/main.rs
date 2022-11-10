@@ -65,6 +65,27 @@ struct CliArgs {
     username: String,
 }
 
+fn print_packet_filtered(p: &net::packets::Packet) {
+    match p {
+        net::packets::Packet::MapChunk { .. }
+        | net::packets::Packet::MapChunkBulk { .. }
+        | net::packets::Packet::RelEntityMove { .. }
+        | net::packets::Packet::EntityVelocity { .. }
+        | net::packets::Packet::EntityMoveLook { .. }
+        | net::packets::Packet::EntityHeadRotation { .. }
+        | net::packets::Packet::EntityMetadata { .. }
+        | net::packets::Packet::EntityDestroy { .. }
+        | net::packets::Packet::UpdateAttributes { .. }
+        | net::packets::Packet::SpawnEntity { .. }
+        | net::packets::Packet::SpawnEntityLiving { .. }
+        | net::packets::Packet::NamedEntitySpawn { .. }
+        | net::packets::Packet::EntityLook { .. } => {
+            return;
+        }
+        _ => debug!("{:?}", p),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
@@ -182,69 +203,82 @@ async fn main() -> anyhow::Result<()> {
                 net::ClientState::Play,
                 net::PacketDirection::Client,
             ) {
-                Ok(pp) => match pp {
-                    net::packets::Packet::KeepAliveClientbound(t) => {
-                        write_tx_net
-                            .send((
-                                net::ClientState::Play,
-                                net::packets::Packet::KeepAliveServerbound(
-                                    net::packets::play::serverbound::KeepAliveServerbound {
-                                        keep_alive_id: t.keep_alive_id,
-                                    },
-                                ),
-                            ))
-                            .await
-                            .unwrap();
+                Ok(pp) => {
+                    print_packet_filtered(&pp);
+                    match pp {
+                        net::packets::Packet::KeepAliveClientbound(t) => {
+                            write_tx_net
+                                .send((
+                                    net::ClientState::Play,
+                                    net::packets::Packet::KeepAliveServerbound(
+                                        net::packets::play::serverbound::KeepAliveServerbound {
+                                            keep_alive_id: t.keep_alive_id,
+                                        },
+                                    ),
+                                ))
+                                .await
+                                .unwrap();
+                        }
+                        net::packets::Packet::PositionClientbound(ref p) => {
+                            main_tx.send(pp.clone()).await.unwrap();
+                            write_tx_net
+                                .send((
+                                    net::ClientState::Play,
+                                    net::packets::Packet::PositionLook(
+                                        net::packets::play::serverbound::PositionLook {
+                                            x: p.x,
+                                            stance: p.y - 1.62,
+                                            y: p.y,
+                                            z: p.z,
+                                            yaw: p.yaw,
+                                            pitch: p.pitch,
+                                            on_ground: p.on_ground,
+                                        },
+                                    ),
+                                ))
+                                .await
+                                .unwrap();
+                        }
+                        net::packets::Packet::Respawn { .. } => main_tx.send(pp).await.unwrap(),
+                        net::packets::Packet::MapChunkBulk { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::MapChunk { .. } => main_tx.send(pp).await.unwrap(),
+                        net::packets::Packet::BlockChange { .. } => main_tx.send(pp).await.unwrap(),
+                        net::packets::Packet::EntityDestroy { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::EntityMoveLook { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::RelEntityMove { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::EntityVelocity { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::SpawnEntity { .. } => main_tx.send(pp).await.unwrap(),
+                        net::packets::Packet::ScoreboardScore(p) => println!("{:?}", p),
+                        net::packets::Packet::ScoreboardObjective(p) => println!("{:?}", p),
+                        net::packets::Packet::SpawnEntityLiving { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::NamedEntitySpawn { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::MultiBlockChange { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::ChatClientbound(p) => {
+                            info!("Chat message: {}", p.message);
+                        }
+                        net::packets::Packet::Disconnect(p) => {
+                            warn!("Disconnected: {}", p.reason);
+                            break 'game;
+                        }
+                        _ => {}
                     }
-                    net::packets::Packet::PositionClientbound(ref p) => {
-                        main_tx.send(pp.clone()).await.unwrap();
-                        write_tx_net
-                            .send((
-                                net::ClientState::Play,
-                                net::packets::Packet::PositionLook(
-                                    net::packets::play::serverbound::PositionLook {
-                                        x: p.x,
-                                        stance: p.y - 1.62,
-                                        y: p.y,
-                                        z: p.z,
-                                        yaw: p.yaw,
-                                        pitch: p.pitch,
-                                        on_ground: p.on_ground,
-                                    },
-                                ),
-                            ))
-                            .await
-                            .unwrap();
-                    }
-                    net::packets::Packet::Respawn { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::MapChunkBulk { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::MapChunk { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::BlockChange { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::EntityDestroy { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::EntityMoveLook { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::RelEntityMove { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::EntityVelocity { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::SpawnEntity { .. } => main_tx.send(pp).await.unwrap(),
-                    net::packets::Packet::ScoreboardScore(p) => println!("{:?}", p),
-                    net::packets::Packet::ScoreboardObjective(p) => println!("{:?}", p),
-                    net::packets::Packet::SpawnEntityLiving { .. } => {
-                        main_tx.send(pp).await.unwrap()
-                    }
-                    net::packets::Packet::NamedEntitySpawn { .. } => {
-                        main_tx.send(pp).await.unwrap()
-                    }
-                    net::packets::Packet::MultiBlockChange { .. } => {
-                        main_tx.send(pp).await.unwrap()
-                    }
-                    net::packets::Packet::ChatClientbound(p) => {
-                        info!("Chat message: {}", p.message);
-                    }
-                    net::packets::Packet::Disconnect(p) => {
-                        warn!("Disconnected: {}", p.reason);
-                        break 'game;
-                    }
-                    _ => {}
-                },
+                }
                 Err(e) => error!("Error decoding packet 0x{:x}: {}", rp.id, e),
             }
         }
@@ -631,11 +665,8 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((pos, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    pos.0 += Vec3::new(
-                                        p.d_x.to_f64() as f32,
-                                        p.d_y.to_f64() as f32,
-                                        p.d_z.to_f64() as f32,
-                                    );
+                                    pos.0 +=
+                                        Vec3::new(p.d_x.0 as f32, p.d_y.0 as f32, p.d_z.0 as f32);
                                 }
                             }
                             net::packets::Packet::RelEntityMove(p) => {
@@ -643,11 +674,8 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((pos, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    pos.0 += Vec3::new(
-                                        p.d_x.to_f64() as f32,
-                                        p.d_y.to_f64() as f32,
-                                        p.d_z.to_f64() as f32,
-                                    );
+                                    pos.0 +=
+                                        Vec3::new(p.d_x.0 as f32, p.d_y.0 as f32, p.d_z.0 as f32);
                                 }
                             }
                             net::packets::Packet::EntityVelocity(p) => {
@@ -667,11 +695,7 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((pos, v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    pos.0 = Vec3::new(
-                                        p.x.to_f64() as f32,
-                                        p.y.to_f64() as f32,
-                                        p.z.to_f64() as f32,
-                                    );
+                                    pos.0 = Vec3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
                                     v.0 = Vec3::new(
                                         p.velocity_x as f32,
                                         p.velocity_y as f32,
@@ -682,21 +706,13 @@ async fn main() -> anyhow::Result<()> {
                             net::packets::Packet::SpawnEntity(p) => {
                                 let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
                                 if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
-                                    pos.0 = Vec3::new(
-                                        p.x.to_f64() as f32,
-                                        p.y.to_f64() as f32,
-                                        p.z.to_f64() as f32,
-                                    );
+                                    pos.0 = Vec3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
                                 }
                             }
                             net::packets::Packet::NamedEntitySpawn(p) => {
                                 let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
                                 if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
-                                    pos.0 = Vec3::new(
-                                        p.x.to_f64() as f32,
-                                        p.y.to_f64() as f32,
-                                        p.z.to_f64() as f32,
-                                    );
+                                    pos.0 = Vec3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
                                 }
                             }
                             net::packets::Packet::EntityDestroy(p) => {

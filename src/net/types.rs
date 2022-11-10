@@ -1,4 +1,9 @@
+use std::{fmt::Debug, io::Cursor, marker::PhantomData};
+
+use byteorder::ReadBytesExt;
 use intmap::IntMap;
+
+use crate::varint::VarInt;
 
 use super::packet_helpers::Serializable;
 
@@ -180,7 +185,17 @@ pub enum EntityAnimation {
 pub struct EntityProperty {
     pub key: String,
     pub value: f64,
-    pub modifiers: Vec<EntityModifier>,
+    pub modifiers: PrefixedVec<EntityModifier, i16>,
+}
+
+impl Serializable for EntityProperty {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(Self {
+            key: Serializable::read_from(r)?,
+            value: Serializable::read_from(r)?,
+            modifiers: Serializable::read_from(r)?,
+        })
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -188,6 +203,16 @@ pub struct EntityModifier {
     pub uuid: u128,
     pub amount: f64,
     pub operation: u8,
+}
+
+impl Serializable for EntityModifier {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(Self {
+            uuid: Serializable::read_from(r)?,
+            amount: Serializable::read_from(r)?,
+            operation: Serializable::read_from(r)?,
+        })
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -269,7 +294,11 @@ impl Serializable for Slot {
 
             let nbt_length = i16::read_from(r)?;
             if nbt_length != -1 {
-                s.data = Some(nbt::Blob::from_gzip_reader(r)?);
+                let mut data = vec![0u8; nbt_length as usize];
+                r.read_exact(&mut data)?;
+                let mut c = Cursor::new(&data);
+                let nbt_data = CompressedGzData::<nbt::Blob>::read_from(&mut c)?.0;
+                s.data = Some(nbt_data);
             }
         }
 
@@ -386,5 +415,126 @@ impl Serializable for EntityMeta {
         u8::write_to(&0x7f, w)?;
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ExplosionRecord {
+    pub x: i8,
+    pub y: i8,
+    pub z: i8,
+}
+
+impl Serializable for ExplosionRecord {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(ExplosionRecord {
+            x: Serializable::read_from(r)?,
+            y: Serializable::read_from(r)?,
+            z: Serializable::read_from(r)?,
+        })
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        self.x.write_to(w)?;
+        self.y.write_to(w)?;
+        self.z.write_to(w)
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct StatisticsEntry {
+    pub name: String,
+    pub value: VarInt,
+}
+
+impl Serializable for StatisticsEntry {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(Self {
+            name: Serializable::read_from(r)?,
+            value: Serializable::read_from(r)?,
+        })
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        self.name.write_to(w)?;
+        self.value.write_to(w)
+    }
+}
+
+impl Serializable for nbt::Blob {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(nbt::Blob::from_reader(r)?)
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct CompressedGzData<T: Serializable>(T);
+
+impl<T: Serializable> Serializable for CompressedGzData<T> {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let mut gzwrapper = flate2::read::GzDecoder::new(r);
+
+        Ok(Self(T::read_from(&mut gzwrapper)?))
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ObjectData {
+    pub data: i32,
+    pub velocity: Option<(i16, i16, i16)>,
+}
+
+impl Serializable for ObjectData {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let data = i32::read_from(r)?;
+        let velocity = if data != 0 {
+            Some((i16::read_from(r)?, i16::read_from(r)?, i16::read_from(r)?))
+        } else {
+            None
+        };
+
+        Ok(Self { data, velocity })
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct FixedPoint32(pub f64);
+
+impl Serializable for FixedPoint32 {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let v = i32::read_from(r)?;
+
+        Ok(Self(v as f64 / 32.0))
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        ((self.0 * 32.0) as i32).write_to(w)
+    }
+}
+
+impl Debug for FixedPoint32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct FixedPoint8(pub f64);
+
+impl Serializable for FixedPoint8 {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let v = i8::read_from(r)?;
+
+        Ok(Self(v as f64 / 32.0))
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        ((self.0 * 32.0) as i8).write_to(w)
+    }
+}
+
+impl Debug for FixedPoint8 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }

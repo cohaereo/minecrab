@@ -25,12 +25,12 @@ packet_ids! {
     login Login {
         clientbound Client {
                 0x00 => Disconnect,
-                // 0x01 => EncryptionBeginClientbound,
+                0x01 => EncryptionBeginClientbound,
                 0x02 => Success,
         }
         serverbound Server {
                 0x00 => LoginStart,
-                // 0x01 => EncryptionBeginServerbound,
+                0x01 => EncryptionBeginServerbound,
         }
     }
     play Play {
@@ -67,14 +67,14 @@ packet_ids! {
                 0x1d => EntityEffect,
                 0x1e => RemoveEntityEffect,
                 0x1f => Experience,
-                // 0x20 => UpdateAttributes,
+                0x20 => UpdateAttributes,
                 0x21 => MapChunk,
                 0x22 => MultiBlockChange,
                 0x23 => BlockChange,
                 0x24 => BlockAction,
                 0x25 => BlockBreakAnimation,
                 0x26 => MapChunkBulk,
-                // 0x27 => Explosion,
+                0x27 => Explosion,
                 0x28 => WorldEvent,
                 0x29 => NamedSoundEffect,
                 0x2a => WorldParticles,
@@ -88,16 +88,16 @@ packet_ids! {
                 0x32 => ConfirmTransactionClientbound,
                 0x33 => UpdateSignClientBound,
                 0x34 => Map,
-                // 0x35 => TileEntityData,
+                0x35 => TileEntityData,
                 0x36 => OpenSignEntity,
-                // 0x37 => Statistics,
+                0x37 => Statistics,
                 0x38 => PlayerInfo,
                 0x39 => AbilitiesClientbound,
                 0x3a => TabCompleteClientbound,
                 0x3b => ScoreboardObjective,
                 0x3c => ScoreboardScore,
                 0x3d => ScoreboardDisplayObjective,
-                // 0x3e => ScoreboardTeam,
+                0x3e => ScoreboardTeam,
                 0x3f => CustomPayloadClientbound,
                 0x40 => KickDisconnect,
         }
