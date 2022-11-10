@@ -122,10 +122,6 @@ pub struct CameraController {
     is_backward_pressed: bool,
     is_left_pressed: bool,
     is_right_pressed: bool,
-    is_left_arrow_pressed: bool,
-    is_right_arrow_pressed: bool,
-    is_up_arrow_pressed: bool,
-    is_down_arrow_pressed: bool,
     is_shift_pressed: bool,
     boost: bool,
 }
@@ -138,10 +134,6 @@ impl CameraController {
             is_backward_pressed: false,
             is_left_pressed: false,
             is_right_pressed: false,
-            is_left_arrow_pressed: false,
-            is_right_arrow_pressed: false,
-            is_up_arrow_pressed: false,
-            is_down_arrow_pressed: false,
             is_shift_pressed: false,
             boost: false,
         }
@@ -176,22 +168,6 @@ impl CameraController {
                         self.is_right_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::Left => {
-                        self.is_left_arrow_pressed = is_pressed;
-                        true
-                    }
-                    VirtualKeyCode::Right => {
-                        self.is_right_arrow_pressed = is_pressed;
-                        true
-                    }
-                    VirtualKeyCode::Up => {
-                        self.is_up_arrow_pressed = is_pressed;
-                        true
-                    }
-                    VirtualKeyCode::Down => {
-                        self.is_down_arrow_pressed = is_pressed;
-                        true
-                    }
                     VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
                         self.is_shift_pressed = is_pressed;
                         true
@@ -205,6 +181,10 @@ impl CameraController {
             }
             _ => false,
         }
+    }
+
+    pub fn process_mouse(&self, camera: &mut Camera, delta: (f64, f64)) {
+        camera.orientation += Vec2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.35;
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, delta: f32) {
@@ -223,28 +203,11 @@ impl CameraController {
             camera.position -= camera.right * velocity;
         }
 
-        if self.is_right_arrow_pressed {
-            camera.orientation.y += 16.0 * velocity;
-        }
-        if self.is_left_arrow_pressed {
-            camera.orientation.y -= 16.0 * velocity;
-        }
-
-        if self.is_up_arrow_pressed {
-            camera.orientation.x -= 16.0 * velocity;
-        }
-        if self.is_down_arrow_pressed {
-            camera.orientation.x += 16.0 * velocity;
-        }
-
         if self.boost {
             camera.position += camera.front * 50.0;
             self.boost = false;
         }
 
-        // println!(
-        //     "{:.2} {:.2} {:.2}",
-        //     camera.position.x, camera.position.y, camera.position.z
-        // );
+        camera.orientation.x = camera.orientation.x.clamp(-89.9, 89.9)
     }
 }

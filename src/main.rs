@@ -34,7 +34,7 @@ use crate::{
 };
 
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{PhysicalPosition, PhysicalSize},
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
@@ -515,12 +515,7 @@ async fn main() -> anyhow::Result<()> {
     let debuglines = DebugLineRenderer::new_chunklines(&device);
     let debugcube = DebugCubeRenderer::new(&device);
 
-    let adapter_info = adapter.get_info();
-    let cpu_brand = raw_cpuid::CpuId::new()
-        .get_processor_brand_string()
-        .and_then(|b| Some(b.as_str().to_string()))
-        .unwrap_or("Unknown CPU".to_string());
-
+    let mut cursor_grabbed = false;
     let mut frame_count = 0;
     let mut last_frame = Instant::now();
     let mut chunks_rendered = 0;
@@ -529,6 +524,14 @@ async fn main() -> anyhow::Result<()> {
     let mut chunklines_shown = false;
     event_loop.run(move |event, _, control_flow| {
         match event {
+            Event::DeviceEvent { ref event, .. } => match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    if cursor_grabbed {
+                        camera_controller.process_mouse(&mut camera, *delta);
+                    }
+                }
+                _ => {}
+            },
             Event::WindowEvent {
                 ref event,
                 window_id,
@@ -551,6 +554,18 @@ async fn main() -> anyhow::Result<()> {
                                 VirtualKeyCode::F4 => {
                                     if input.state == ElementState::Pressed {
                                         chunklines_shown = !chunklines_shown;
+                                    }
+                                }
+                                VirtualKeyCode::F1 => {
+                                    if input.state == ElementState::Pressed {
+                                        cursor_grabbed = !cursor_grabbed;
+
+                                        println!("Cursor locked: {}", cursor_grabbed);
+                                        window.set_cursor_grab(cursor_grabbed).ok();
+                                        // if let Err(e) = window.set_cursor_grab(cursor_grabbed) {
+                                        //     warn!("Cursor grab failed: {}", e)
+                                        // }
+                                        window.set_cursor_visible(!cursor_grabbed);
                                     }
                                 }
                                 _ => {}
@@ -839,29 +854,21 @@ async fn main() -> anyhow::Result<()> {
                             "Chunks rendered",
                             format!("{}/{}", chunks_rendered, total_chunks),
                         );
-                        ui.text(format!("{} chunks waiting for meshing", dirty_chunk_count))
+                        ui.text(format!("{} chunks waiting for meshing", dirty_chunk_count));
+                        ui.separator();
+                        ui.text(format!(
+                            "Press F1 to {} cursor",
+                            if cursor_grabbed { "unlock" } else { "lock" }
+                        ));
+                        ui.text(format!(
+                            "Press F4 to {} chunk borders",
+                            if chunklines_shown { "hide" } else { "show" }
+                        ));
                     });
 
                 imgui::Window::new("Settings").build(&ui, || {
                     imgui::Slider::new("Render distance", 2, 64).build(&ui, &mut render_distance);
                     imgui::Slider::new("FOV", 30., 110.).build(&ui, &mut camera.fovy);
-                });
-
-                imgui::Window::new("System information").build(&ui, || {
-                    ui.text(format!("Rust: {}", build_info::RUSTC_VERSION));
-                    ui.separator();
-                    ui.text(format!("CPU: {}", cpu_brand));
-                    ui.separator();
-                    ui.text(format!(
-                        "Display: {}x{} ({:04x})",
-                        surface_config.width, surface_config.height, adapter_info.vendor
-                    ));
-                    ui.text(format!(
-                        "{} on {:?}",
-                        &adapter_info.name, adapter_info.backend
-                    ));
-                    // TODO: Upgrade to wgpu 0.14 so we can use this, the imgui integration currently depends on 0.13
-                    // ui.text(&adapter_info.driver_info);
                 });
 
                 imgui::Window::new("Entities").build(&ui, || {
