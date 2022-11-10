@@ -20,9 +20,6 @@ pub struct Camera {
     up: Vec3,
     front: Vec3,
     right: Vec3,
-    // pub eye: glam::Vec3,
-    // pub target: glam::Vec3,
-    // pub up: glam::Vec3,
     pub position: Vec3,
     pub orientation: Vec2,
     pub aspect: f32,
@@ -30,6 +27,7 @@ pub struct Camera {
     pub znear: f32,
     pub zfar: f32,
     pub vp: Mat4,
+    pub fov_scale: f32,
 }
 
 fn within(min: f32, value: f32, max: f32) -> bool {
@@ -67,8 +65,12 @@ impl Camera {
     fn build_view_projection_matrix(&mut self) -> glam::Mat4 {
         self.update_vectors();
         let view = Mat4::look_at_rh(self.position, self.position + self.front, self.up);
-        let proj =
-            glam::Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar);
+        let proj = glam::Mat4::perspective_rh(
+            self.fovy.to_radians() * self.fov_scale,
+            self.aspect,
+            self.znear,
+            self.zfar,
+        );
         self.vp = proj * view;
 
         self.vp
@@ -123,6 +125,7 @@ pub struct CameraController {
     is_left_pressed: bool,
     is_right_pressed: bool,
     is_shift_pressed: bool,
+    is_zoomed: bool,
     boost: bool,
 }
 
@@ -135,6 +138,7 @@ impl CameraController {
             is_left_pressed: false,
             is_right_pressed: false,
             is_shift_pressed: false,
+            is_zoomed: false,
             boost: false,
         }
     }
@@ -168,6 +172,10 @@ impl CameraController {
                         self.is_right_pressed = is_pressed;
                         true
                     }
+                    VirtualKeyCode::C => {
+                        self.is_zoomed = is_pressed;
+                        true
+                    }
                     VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
                         self.is_shift_pressed = is_pressed;
                         true
@@ -184,7 +192,12 @@ impl CameraController {
     }
 
     pub fn process_mouse(&self, camera: &mut Camera, delta: (f64, f64)) {
-        camera.orientation += Vec2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.35;
+        let mut offset = Vec2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.35;
+        if self.is_zoomed {
+            offset *= 0.25;
+        }
+
+        camera.orientation += offset;
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, delta: f32) {
@@ -207,6 +220,8 @@ impl CameraController {
             camera.position += camera.front * 50.0;
             self.boost = false;
         }
+
+        camera.fov_scale = if self.is_zoomed { 0.25 } else { 1.0 };
 
         camera.orientation.x = camera.orientation.x.clamp(-89.9, 89.9)
     }
