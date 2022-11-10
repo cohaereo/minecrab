@@ -61,9 +61,7 @@ pub trait WriteProtoExt: Write {
 impl<W: io::Write + ?Sized> WriteProtoExt for W {}
 
 pub fn varint_len(value: i32) -> usize {
-    (i32::BITS as usize - value.leading_zeros() as usize)
-        .div_ceil(7)
-        .max(1)
+    (((i32::BITS as usize - value.leading_zeros() as usize) + 6) / 7).max(1)
 }
 
 // * Implementations for AsyncRead/AsyncWrite
