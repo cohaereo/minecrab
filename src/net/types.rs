@@ -1,84 +1,31 @@
-use std::{fmt::Debug, io::Cursor, marker::PhantomData};
+use std::{fmt::Debug, io::Cursor};
 
-use byteorder::ReadBytesExt;
 use intmap::IntMap;
+use minecrab_derive::Serializable;
 
 use crate::varint::VarInt;
 
 use super::packet_helpers::Serializable;
 
-// !
-// TODO: We should probably make a derive macro to implement Serializable for the simpler structs
-// * This also means we can get rid of the hack in the macro_rules-based packet struct generator for vecs
-// !
-
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct PositionIBI {
     pub x: i32,
     pub y: u8,
     pub z: i32,
 }
 
-impl Serializable for PositionIBI {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            x: i32::read_from(r)?,
-            y: u8::read_from(r)?,
-            z: i32::read_from(r)?,
-        })
-    }
-
-    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
-        self.x.write_to(w)?;
-        self.y.write_to(w)?;
-        self.z.write_to(w)
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct PositionISI {
     pub x: i32,
     pub y: i16,
     pub z: i32,
 }
 
-impl Serializable for PositionISI {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            x: i32::read_from(r)?,
-            y: i16::read_from(r)?,
-            z: i32::read_from(r)?,
-        })
-    }
-
-    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
-        self.x.write_to(w)?;
-        self.y.write_to(w)?;
-        self.z.write_to(w)
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct PositionIII {
     pub x: i32,
     pub y: i32,
     pub z: i32,
-}
-
-impl Serializable for PositionIII {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            x: i32::read_from(r)?,
-            y: i32::read_from(r)?,
-            z: i32::read_from(r)?,
-        })
-    }
-
-    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
-        self.x.write_to(w)?;
-        self.y.write_to(w)?;
-        self.z.write_to(w)
-    }
 }
 
 /// General position type. Also used for 26-26-12 encoding
@@ -181,57 +128,26 @@ pub enum EntityAnimation {
     Uncrouch = 105,
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct EntityProperty {
     pub key: String,
     pub value: f64,
     pub modifiers: PrefixedVec<EntityModifier, i16>,
 }
 
-impl Serializable for EntityProperty {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            key: Serializable::read_from(r)?,
-            value: Serializable::read_from(r)?,
-            modifiers: Serializable::read_from(r)?,
-        })
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct EntityModifier {
     pub uuid: u128,
     pub amount: f64,
     pub operation: u8,
 }
 
-impl Serializable for EntityModifier {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            uuid: Serializable::read_from(r)?,
-            amount: Serializable::read_from(r)?,
-            operation: Serializable::read_from(r)?,
-        })
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct ChunkMetadata {
     pub chunk_x: i32,
     pub chunk_z: i32,
     pub primary_bitmap: u16,
     pub add_bitmap: u16,
-}
-
-impl Serializable for ChunkMetadata {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            chunk_x: Serializable::read_from(r)?,
-            chunk_z: Serializable::read_from(r)?,
-            primary_bitmap: Serializable::read_from(r)?,
-            add_bitmap: Serializable::read_from(r)?,
-        })
-    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -256,21 +172,11 @@ impl Serializable for BlockChangeRecord {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct EntitySpawnProperty {
     pub name: String,
     pub value: String,
     pub signature: String,
-}
-
-impl Serializable for EntitySpawnProperty {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            name: Serializable::read_from(r)?,
-            value: Serializable::read_from(r)?,
-            signature: Serializable::read_from(r)?,
-        })
-    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -418,47 +324,17 @@ impl Serializable for EntityMeta {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct ExplosionRecord {
     pub x: i8,
     pub y: i8,
     pub z: i8,
 }
 
-impl Serializable for ExplosionRecord {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(ExplosionRecord {
-            x: Serializable::read_from(r)?,
-            y: Serializable::read_from(r)?,
-            z: Serializable::read_from(r)?,
-        })
-    }
-
-    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
-        self.x.write_to(w)?;
-        self.y.write_to(w)?;
-        self.z.write_to(w)
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct StatisticsEntry {
     pub name: String,
     pub value: VarInt,
-}
-
-impl Serializable for StatisticsEntry {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        Ok(Self {
-            name: Serializable::read_from(r)?,
-            value: Serializable::read_from(r)?,
-        })
-    }
-
-    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
-        self.name.write_to(w)?;
-        self.value.write_to(w)
-    }
 }
 
 impl Serializable for nbt::Blob {

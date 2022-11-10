@@ -560,11 +560,7 @@ async fn main() -> anyhow::Result<()> {
                                     if input.state == ElementState::Pressed {
                                         cursor_grabbed = !cursor_grabbed;
 
-                                        println!("Cursor locked: {}", cursor_grabbed);
                                         window.set_cursor_grab(cursor_grabbed).ok();
-                                        // if let Err(e) = window.set_cursor_grab(cursor_grabbed) {
-                                        //     warn!("Cursor grab failed: {}", e)
-                                        // }
                                         window.set_cursor_visible(!cursor_grabbed);
                                     }
                                 }

@@ -1283,6 +1283,7 @@ dependencies = [
  "imgui-winit-support",
  "intmap",
  "log",
+ "minecrab_derive",
  "nibble_vec",
  "pretty_env_logger",
  "profiling",
@@ -1296,6 +1297,15 @@ dependencies = [
  "version",
  "wgpu",
  "winit 0.26.1",
+]
+
+[[package]]
+name = "minecrab_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

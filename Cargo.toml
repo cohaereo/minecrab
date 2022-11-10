@@ -24,6 +24,7 @@ imgui-wgpu = "0.20"
 imgui-winit-support = { version = "0.8", features = ["winit-26"] }
 intmap = "2.0.0"
 log = "0.4"
+minecrab_derive = { path = "./minecrab_derive" }
 nibble_vec = "0.1.0"
 pretty_env_logger = "0.4"
 profiling = { version = "1.0.7", features = ["profile-with-tracy"] }
