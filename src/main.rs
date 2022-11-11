@@ -21,7 +21,7 @@ use wgpu::util::DeviceExt;
 use world::ChunkManager;
 
 use crate::{
-    ecs::{update_velocity, Position, Velocity},
+    ecs::{update_interpolation, update_velocity, InterpolatedPosition, Position, Velocity},
     net::codec::MinecraftCodec,
     render::{
         chunk::{ChunkRenderData, ChunkRenderer},
@@ -148,7 +148,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Wait for player pos
 
-    loop {
+    'w: loop {
         let rp = MinecraftCodec::read(&mut conn_read).await?;
 
         match net::versions::v1_7_10::decode_packet(
@@ -156,35 +156,41 @@ async fn main() -> anyhow::Result<()> {
             net::ClientState::Play,
             net::PacketDirection::Client,
         ) {
-            Ok(net::packets::Packet::PositionClientbound(p)) => {
-                camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
-                camera.orientation = Vector2::new(p.pitch, p.yaw);
-                write_tx
-                    .send((
-                        net::ClientState::Play,
-                        net::packets::Packet::PositionLook(
-                            net::packets::play::serverbound::PositionLook {
-                                x: p.x,
-                                stance: p.y - 1.62,
-                                y: p.y,
-                                z: p.z,
-                                yaw: p.yaw,
-                                pitch: p.pitch,
-                                on_ground: p.on_ground,
-                            },
-                        ),
-                    ))
-                    .await?;
+            Ok(pp) => {
+                print_packet_filtered(&pp);
+                match pp {
+                    net::packets::Packet::PositionClientbound(p) => {
+                        camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
+                        camera.orientation = Vector2::new(p.pitch, p.yaw);
+                        write_tx
+                            .send((
+                                net::ClientState::Play,
+                                net::packets::Packet::PositionLook(
+                                    net::packets::play::serverbound::PositionLook {
+                                        x: p.x,
+                                        stance: p.y - 1.62,
+                                        y: p.y,
+                                        z: p.z,
+                                        yaw: p.yaw,
+                                        pitch: p.pitch,
+                                        on_ground: p.on_ground,
+                                    },
+                                ),
+                            ))
+                            .await?;
 
-                write_tx
-                    .send((
-                        net::ClientState::Play,
-                        net::packets::Packet::ClientCommand(
-                            net::packets::play::serverbound::ClientCommand { payload: 0 },
-                        ),
-                    ))
-                    .await?;
-                break;
+                        write_tx
+                            .send((
+                                net::ClientState::Play,
+                                net::packets::Packet::ClientCommand(
+                                    net::packets::play::serverbound::ClientCommand { payload: 0 },
+                                ),
+                            ))
+                            .await?;
+                        break 'w;
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -248,6 +254,9 @@ async fn main() -> anyhow::Result<()> {
                             main_tx.send(pp).await.unwrap()
                         }
                         net::packets::Packet::EntityMoveLook { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
+                        net::packets::Packet::EntityTeleport { .. } => {
                             main_tx.send(pp).await.unwrap()
                         }
                         net::packets::Packet::RelEntityMove { .. } => {
@@ -586,6 +595,7 @@ async fn main() -> anyhow::Result<()> {
                 imgui_ctx.io_mut().update_delta_time(last_frame.elapsed());
 
                 update_velocity(&mut world, frame_delta);
+                update_interpolation(&mut world, frame_delta);
 
                 // * Receive chunks
                 // ! Yes i know doing this just before rendering a frame isn't great but it doesnt need to be yet.
@@ -669,26 +679,36 @@ async fn main() -> anyhow::Result<()> {
                             }
                             net::packets::Packet::EntityMoveLook(p) => {
                                 let ent = ecs::get_or_insert(&mut world, p.entity_id);
-                                if let Ok((pos, _v)) =
-                                    world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
-                                {
+                                if let Ok((pos, interp)) = world.query_one_mut::<(
+                                    &mut Position,
+                                    &mut InterpolatedPosition,
+                                )>(
+                                    ent
+                                ) {
                                     pos.0 += Vector3::new(
                                         p.d_x.0 as f32,
                                         p.d_y.0 as f32,
                                         p.d_z.0 as f32,
                                     );
+
+                                    interp.delta = ecs::TICK_DELTA
                                 }
                             }
                             net::packets::Packet::RelEntityMove(p) => {
                                 let ent = ecs::get_or_insert(&mut world, p.entity_id);
-                                if let Ok((pos, _v)) =
-                                    world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
-                                {
+                                if let Ok((pos, interp)) = world.query_one_mut::<(
+                                    &mut Position,
+                                    &mut InterpolatedPosition,
+                                )>(
+                                    ent
+                                ) {
                                     pos.0 += Vector3::new(
                                         p.d_x.0 as f32,
                                         p.d_y.0 as f32,
                                         p.d_z.0 as f32,
                                     );
+
+                                    interp.delta = ecs::TICK_DELTA
                                 }
                             }
                             net::packets::Packet::EntityVelocity(p) => {
@@ -701,6 +721,19 @@ async fn main() -> anyhow::Result<()> {
                                         p.velocity_y as f32,
                                         p.velocity_z as f32,
                                     ) * ecs::VELOCITY_UNIT;
+                                }
+                            }
+                            net::packets::Packet::EntityTeleport(p) => {
+                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
+                                if let Ok((pos, interp)) = world.query_one_mut::<(
+                                    &mut Position,
+                                    &mut InterpolatedPosition,
+                                )>(
+                                    ent
+                                ) {
+                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+
+                                    interp.delta = ecs::TICK_DELTA / 5.;
                                 }
                             }
                             net::packets::Packet::SpawnEntityLiving(p) => {
@@ -889,9 +922,6 @@ async fn main() -> anyhow::Result<()> {
                                     r: 0.541,
                                     g: 0.675,
                                     b: 1.000,
-                                    // r: 0.20,
-                                    // g: 0.031,
-                                    // b: 0.031,
                                     a: 1.000,
                                 }),
                                 store: true,
@@ -934,8 +964,6 @@ async fn main() -> anyhow::Result<()> {
                                         (cr.position.2 * 16) as f32,
                                     );
 
-                                    let chunk_transform = Matrix4::from_translation(chunkpos_real);
-
                                     if chunkpos_real
                                         .distance(camera.position.to_homogeneous().xyz())
                                         < (render_distance as f32 * 2. * 16.)
@@ -971,8 +999,11 @@ async fn main() -> anyhow::Result<()> {
                     render_pass.set_pipeline(&debugcube_pipeline);
                     render_pass.set_bind_group(0, &camera_bind_group, &[]);
                     render_pass.set_bind_group(1, &texture_bind_group_debugcube, &[]);
-                    for (_, position) in world.query::<&Position>().iter() {
-                        debugcube.render(&mut render_pass, position.0);
+                    for (_, position) in world.query::<&InterpolatedPosition>().iter() {
+                        debugcube.render(
+                            &mut render_pass,
+                            position.position + Vector3::new(0., 0.5, 0.),
+                        );
                     }
 
                     if chunklines_shown {
