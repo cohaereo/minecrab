@@ -437,10 +437,7 @@ async fn main() -> anyhow::Result<()> {
         surface_config.format,
     );
 
-    const CHUNK_AABB: AABB = AABB {
-        min: Vec3::splat(0.),
-        max: Vec3::splat(16.),
-    };
+    // const CHUNK_AABB: AABB = AABB::new(Vec3::splat(0.), Vec3::splat(16.));
 
     let mut imgui_ctx = imgui::Context::create();
     let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui_ctx);
@@ -937,7 +934,19 @@ async fn main() -> anyhow::Result<()> {
                                     if chunkpos_real.distance(camera.position)
                                         < (render_distance as f32 * 2. * 16.)
                                     {
-                                        if camera.is_in_frustrum(CHUNK_AABB, chunk_transform) {
+                                        let aabb = collision::Aabb3 {
+                                            min: cgmath::Point3::new(
+                                                chunkpos_real.x,
+                                                chunkpos_real.y,
+                                                chunkpos_real.z,
+                                            ),
+                                            max: cgmath::Point3::new(
+                                                chunkpos_real.x + 16.,
+                                                chunkpos_real.y + 16.,
+                                                chunkpos_real.z + 16.,
+                                            ),
+                                        };
+                                        if camera.is_in_frustrum(&aabb) {
                                             ChunkRenderer::render(
                                                 &mut render_pass,
                                                 cr,

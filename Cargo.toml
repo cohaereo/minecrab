@@ -9,7 +9,9 @@ edition = "2021"
 anyhow = "1"
 bytemuck = { version = "1.12", features = ["derive"] }
 byteorder = "1.4"
+cgmath = "0.17"
 clap = { version = "4.0.19", features = ["derive"] }
+collision = "0.20.1"
 flate2 = "1.0"
 fnv = "1.0.7"
 font-awesome = "0.2"

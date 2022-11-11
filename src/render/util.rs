@@ -1,13 +1,7 @@
+use cgmath::{AbsDiffEq, One};
+use collision::Frustum;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
-
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: glam::Mat4 = glam::Mat4::from_cols_array(&[
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.0, 0.0, 0.5, 1.0,
-]);
 
 #[derive(Clone, Copy, Debug)]
 pub struct AABB {
@@ -15,7 +9,6 @@ pub struct AABB {
     pub max: Vec3,
 }
 
-#[derive(Default)]
 pub struct Camera {
     up: Vec3,
     front: Vec3,
@@ -28,6 +21,7 @@ pub struct Camera {
     pub zfar: f32,
     pub vp: Mat4,
     pub fov_scale: f32,
+    vp_cg: cgmath::Matrix4<f32>,
 }
 
 fn within(min: f32, value: f32, max: f32) -> bool {
@@ -40,15 +34,15 @@ impl Camera {
             up: Vec3::Y,
             front: Vec3::Z,
             right: Vec3::X,
-            position: Vec3::new(136.30138437834088, 128.000000181198082, 301.54814082141263),
-            // position: Vec3::new(22., 77., 40.),
-            // position: Vec3::default(),
+            position: Vec3::new(0., 0., 0.),
             orientation: Vec2::default(),
-            aspect: 800.0 / 600.0,
+            aspect: 1280.0 / 720.0,
             fovy: 80.0,
             znear: 0.1,
             zfar: 1000.0,
-            ..Default::default()
+            vp: Mat4::IDENTITY,
+            fov_scale: 1.0,
+            vp_cg: cgmath::Matrix4::one(),
         }
     }
 
@@ -73,29 +67,25 @@ impl Camera {
         );
         self.vp = proj * view;
 
+        let c0 = self.vp.col(0);
+        let c1 = self.vp.col(1);
+        let c2 = self.vp.col(2);
+        let c3 = self.vp.col(3);
+
+        self.vp_cg = cgmath::Matrix4::from_cols(
+            cgmath::Vector4::new(c0.x, c0.y, c0.z, c0.w),
+            cgmath::Vector4::new(c1.x, c1.y, c1.z, c1.w),
+            cgmath::Vector4::new(c2.x, c2.y, c2.z, c2.w),
+            cgmath::Vector4::new(c3.x, c3.y, c3.z, c3.w),
+        );
+
         self.vp
     }
 
-    pub fn is_in_frustrum(&self, aabb: AABB, transform: Mat4) -> bool {
-        let mvp = self.vp * transform;
-        let corners = [
-            mvp * Vec4::new(aabb.min.x, aabb.min.y, aabb.min.z, 1.0), // x y z
-            mvp * Vec4::new(aabb.max.x, aabb.min.y, aabb.min.z, 1.0), // X y z
-            mvp * Vec4::new(aabb.min.x, aabb.max.y, aabb.min.z, 1.0), // x Y z
-            mvp * Vec4::new(aabb.max.x, aabb.max.y, aabb.min.z, 1.0), // X Y z
-            mvp * Vec4::new(aabb.min.x, aabb.min.y, aabb.max.z, 1.0), // x y Z
-            mvp * Vec4::new(aabb.max.x, aabb.min.y, aabb.max.z, 1.0), // X y Z
-            mvp * Vec4::new(aabb.min.x, aabb.max.y, aabb.max.z, 1.0), // x Y Z
-            mvp * Vec4::new(aabb.max.x, aabb.max.y, aabb.max.z, 1.0), // X Y Z
-        ];
-
-        for ct in corners {
-            if within(-ct.w, ct.x, ct.w) && within(-ct.w, ct.y, ct.w) && within(0., ct.z, ct.w) {
-                return true;
-            }
-        }
-
-        return false;
+    pub fn is_in_frustrum(&self, aabb: &collision::Aabb3<f32>) -> bool {
+        // TODO: use cgmath for the whole project instead of glam
+        let frust = Frustum::from_matrix4(self.vp_cg).unwrap();
+        frust.contains(aabb) != collision::Relation::Out
     }
 }
 
