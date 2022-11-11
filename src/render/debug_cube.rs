@@ -1,4 +1,4 @@
-use glam::Vec3;
+use cgmath::Point3;
 use wgpu::{include_spirv, util::DeviceExt};
 
 use super::texture;
@@ -29,7 +29,7 @@ pub struct DebugCubeRenderer {
 }
 
 impl DebugCubeRenderer {
-    pub fn render<'a>(&'a self, rpass: &mut wgpu::RenderPass<'a>, position: Vec3) {
+    pub fn render<'a>(&'a self, rpass: &mut wgpu::RenderPass<'a>, position: Point3<f32>) {
         rpass.set_push_constants(
             wgpu::ShaderStages::VERTEX,
             0,

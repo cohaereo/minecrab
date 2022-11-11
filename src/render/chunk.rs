@@ -1,4 +1,4 @@
-use glam::Vec3;
+use cgmath::Point3;
 use wgpu::{include_spirv, util::DeviceExt, RenderPass};
 
 use crate::world::ChunkSectionData;
@@ -56,7 +56,7 @@ impl ChunkRenderer {
     pub fn render<'a>(
         rpass: &mut RenderPass<'a>,
         cr: &'a ChunkRenderData,
-        camera_pos: Vec3,
+        camera_pos: Point3<f32>,
         render_distance: u32,
     ) {
         let pc = ChunkRenderDataPushConstants {
@@ -65,7 +65,11 @@ impl ChunkRenderer {
             camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z],
         };
 
-        rpass.set_push_constants(wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, 0, bytemuck::cast_slice(&[pc]));
+        rpass.set_push_constants(
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            0,
+            bytemuck::cast_slice(&[pc]),
+        );
         rpass.set_vertex_buffer(0, cr.vertex_buffer.slice(..));
         rpass.set_index_buffer(cr.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         rpass.draw_indexed(0..cr.index_count as u32, 0, 0..1);

@@ -1,19 +1,19 @@
-use std::{fmt::Debug, num::NonZeroU32};
+use std::fmt::Debug;
 
-use glam::Vec3;
+use cgmath::{Point3, Vector3, Zero};
 use hecs::{Entity, World};
 
 // In units (aka blocks) per second
 pub const VELOCITY_UNIT: f32 = (1. / 8000.) * 20.;
 // pub const VELOCITY_UNIT: f32 = (1. / 8000.);
 
-pub struct Position(pub Vec3);
-pub struct Velocity(pub Vec3);
+pub struct Position(pub Point3<f32>);
+pub struct Velocity(pub Vector3<f32>);
 
 pub fn update_velocity(world: &mut World, delta: f32) {
     for (e, (pos, vel)) in world.query::<(&mut Position, &Velocity)>().iter() {
         // FIXME: We're not moving in Y, because the lack of block collision makes mobs phase through the ground
-        let temp_vel = Vec3::new(vel.0.x, 0., vel.0.z);
+        let temp_vel = Vector3::new(vel.0.x, 0., vel.0.z);
         pos.0 += temp_vel * delta;
     }
 }
@@ -21,10 +21,13 @@ pub fn update_velocity(world: &mut World, delta: f32) {
 pub fn get_or_insert(world: &mut World, eid: i32) -> Entity {
     // println!("{:?}", NonZeroU32::new(eid as u32));
     let ent = Entity::from_bits(eid as u64 | (1 << 32)).unwrap();
-    if world.get::<(&Position)>(ent).is_ok() {
+    if world.get::<&Position>(ent).is_ok() {
         ent
     } else {
-        world.spawn_at(ent, (Position(Vec3::default()), Velocity(Vec3::default())));
+        world.spawn_at(
+            ent,
+            (Position(Point3::new(0., 0., 0.)), Velocity(Vector3::zero())),
+        );
         ent
     }
 }

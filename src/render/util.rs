@@ -1,27 +1,19 @@
-use cgmath::{AbsDiffEq, One};
+use cgmath::{InnerSpace, Matrix4, One, Point3, Vector2, Vector3, Vector4, Zero};
 use collision::Frustum;
-use glam::{Mat4, Vec2, Vec3, Vec4};
 use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
 
-#[derive(Clone, Copy, Debug)]
-pub struct AABB {
-    pub min: Vec3,
-    pub max: Vec3,
-}
-
 pub struct Camera {
-    up: Vec3,
-    front: Vec3,
-    right: Vec3,
-    pub position: Vec3,
-    pub orientation: Vec2,
+    up: Vector3<f32>,
+    front: Vector3<f32>,
+    right: Vector3<f32>,
+    pub position: Point3<f32>,
+    pub orientation: Vector2<f32>,
     pub aspect: f32,
     pub fovy: f32,
     pub znear: f32,
     pub zfar: f32,
-    pub vp: Mat4,
+    pub vp: Matrix4<f32>,
     pub fov_scale: f32,
-    vp_cg: cgmath::Matrix4<f32>,
 }
 
 fn within(min: f32, value: f32, max: f32) -> bool {
@@ -31,60 +23,47 @@ fn within(min: f32, value: f32, max: f32) -> bool {
 impl Camera {
     pub fn new() -> Self {
         Self {
-            up: Vec3::Y,
-            front: Vec3::Z,
-            right: Vec3::X,
-            position: Vec3::new(0., 0., 0.),
-            orientation: Vec2::default(),
+            up: Vector3::unit_y(),
+            front: Vector3::unit_z(),
+            right: Vector3::unit_x(),
+            position: Point3::new(0., 0., 0.),
+            orientation: Vector2::zero(),
             aspect: 1280.0 / 720.0,
             fovy: 80.0,
             znear: 0.1,
             zfar: 1000.0,
-            vp: Mat4::IDENTITY,
+            vp: Matrix4::one(),
             fov_scale: 1.0,
-            vp_cg: cgmath::Matrix4::one(),
         }
     }
 
     fn update_vectors(&mut self) {
-        let mut front = Vec3::default();
+        let mut front = Vector3::zero();
         front.x = -self.orientation.x.to_radians().cos() * self.orientation.y.to_radians().sin();
         front.y = -self.orientation.x.to_radians().sin();
         front.z = self.orientation.x.to_radians().cos() * self.orientation.y.to_radians().cos();
         self.front = front.normalize();
-        self.right = self.front.cross(Vec3::Y).normalize();
+        self.right = self.front.cross(Vector3::unit_y()).normalize();
         self.up = self.right.cross(self.front).normalize();
     }
 
-    fn build_view_projection_matrix(&mut self) -> glam::Mat4 {
+    fn build_view_projection_matrix(&mut self) -> Matrix4<f32> {
         self.update_vectors();
-        let view = Mat4::look_at_rh(self.position, self.position + self.front, self.up);
-        let proj = glam::Mat4::perspective_rh(
-            self.fovy.to_radians() * self.fov_scale,
+
+        let view = Matrix4::look_at(self.position, self.position + self.front, self.up);
+        let proj = cgmath::perspective(
+            cgmath::Rad(self.fovy.to_radians() * self.fov_scale),
             self.aspect,
             self.znear,
             self.zfar,
         );
         self.vp = proj * view;
 
-        let c0 = self.vp.col(0);
-        let c1 = self.vp.col(1);
-        let c2 = self.vp.col(2);
-        let c3 = self.vp.col(3);
-
-        self.vp_cg = cgmath::Matrix4::from_cols(
-            cgmath::Vector4::new(c0.x, c0.y, c0.z, c0.w),
-            cgmath::Vector4::new(c1.x, c1.y, c1.z, c1.w),
-            cgmath::Vector4::new(c2.x, c2.y, c2.z, c2.w),
-            cgmath::Vector4::new(c3.x, c3.y, c3.z, c3.w),
-        );
-
         self.vp
     }
 
     pub fn is_in_frustrum(&self, aabb: &collision::Aabb3<f32>) -> bool {
-        // TODO: use cgmath for the whole project instead of glam
-        let frust = Frustum::from_matrix4(self.vp_cg).unwrap();
+        let frust = Frustum::from_matrix4(self.vp).unwrap();
         frust.contains(aabb) != collision::Relation::Out
     }
 }
@@ -99,12 +78,12 @@ pub struct CameraUniform {
 impl CameraUniform {
     pub fn new() -> Self {
         Self {
-            view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            view_proj: [[0.; 4]; 4],
         }
     }
 
     pub fn update_view_proj(&mut self, camera: &mut Camera) {
-        self.view_proj = camera.build_view_projection_matrix().to_cols_array_2d();
+        self.view_proj = *camera.build_view_projection_matrix().as_ref();
     }
 }
 
@@ -182,7 +161,7 @@ impl CameraController {
     }
 
     pub fn process_mouse(&self, camera: &mut Camera, delta: (f64, f64)) {
-        let mut offset = Vec2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.35;
+        let mut offset = Vector2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.35;
         if self.is_zoomed {
             offset *= 0.25;
         }

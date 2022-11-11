@@ -6,6 +6,7 @@ mod build_info {
     include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 }
 
+use cgmath::{Matrix4, MetricSpace, Point3, Vector2, Vector3};
 use flate2::read::ZlibDecoder;
 use tokio::{net::TcpStream, sync::mpsc};
 
@@ -15,26 +16,24 @@ use std::{
 };
 
 use clap::Parser;
-use glam::{Mat4, Vec2, Vec3};
 use imgui::FontGlyphRanges;
 use wgpu::util::DeviceExt;
 use world::ChunkManager;
 
 use crate::{
     ecs::{update_velocity, Position, Velocity},
-    fixed_point::FixedPoint,
     net::codec::MinecraftCodec,
     render::{
         chunk::{ChunkRenderData, ChunkRenderer},
         chunk_debug::DebugLineRenderer,
         debug_cube::DebugCubeRenderer,
         texture,
-        util::{Camera, CameraController, CameraUniform, AABB},
+        util::{Camera, CameraController, CameraUniform},
     },
 };
 
 use winit::{
-    dpi::{PhysicalPosition, PhysicalSize},
+    dpi::PhysicalSize,
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
@@ -158,8 +157,8 @@ async fn main() -> anyhow::Result<()> {
             net::PacketDirection::Client,
         ) {
             Ok(net::packets::Packet::PositionClientbound(p)) => {
-                camera.position = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
-                camera.orientation = Vec2::new(p.pitch, p.yaw);
+                camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
+                camera.orientation = Vector2::new(p.pitch, p.yaw);
                 write_tx
                     .send((
                         net::ClientState::Play,
@@ -437,7 +436,7 @@ async fn main() -> anyhow::Result<()> {
         surface_config.format,
     );
 
-    // const CHUNK_AABB: AABB = AABB::new(Vec3::splat(0.), Vec3::splat(16.));
+    // const CHUNK_AABB: AABB = AABB::new(Vector3::splat(0.), Vector3::splat(16.));
 
     let mut imgui_ctx = imgui::Context::create();
     let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui_ctx);
@@ -673,8 +672,11 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((pos, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    pos.0 +=
-                                        Vec3::new(p.d_x.0 as f32, p.d_y.0 as f32, p.d_z.0 as f32);
+                                    pos.0 += Vector3::new(
+                                        p.d_x.0 as f32,
+                                        p.d_y.0 as f32,
+                                        p.d_z.0 as f32,
+                                    );
                                 }
                             }
                             net::packets::Packet::RelEntityMove(p) => {
@@ -682,8 +684,11 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((pos, _v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    pos.0 +=
-                                        Vec3::new(p.d_x.0 as f32, p.d_y.0 as f32, p.d_z.0 as f32);
+                                    pos.0 += Vector3::new(
+                                        p.d_x.0 as f32,
+                                        p.d_y.0 as f32,
+                                        p.d_z.0 as f32,
+                                    );
                                 }
                             }
                             net::packets::Packet::EntityVelocity(p) => {
@@ -691,7 +696,7 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((_pos, v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    v.0 = Vec3::new(
+                                    v.0 = Vector3::new(
                                         p.velocity_x as f32,
                                         p.velocity_y as f32,
                                         p.velocity_z as f32,
@@ -703,8 +708,8 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok((pos, v)) =
                                     world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
                                 {
-                                    pos.0 = Vec3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
-                                    v.0 = Vec3::new(
+                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                                    v.0 = Vector3::new(
                                         p.velocity_x as f32,
                                         p.velocity_y as f32,
                                         p.velocity_z as f32,
@@ -714,13 +719,13 @@ async fn main() -> anyhow::Result<()> {
                             net::packets::Packet::SpawnEntity(p) => {
                                 let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
                                 if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
-                                    pos.0 = Vec3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
                                 }
                             }
                             net::packets::Packet::NamedEntitySpawn(p) => {
                                 let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
                                 if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
-                                    pos.0 = Vec3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
                                 }
                             }
                             net::packets::Packet::EntityDestroy(p) => {
@@ -730,7 +735,7 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             }
                             net::packets::Packet::PositionClientbound(p) => {
-                                camera.position = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+                                camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
                             }
                             _ => {}
                         }
@@ -912,7 +917,7 @@ async fn main() -> anyhow::Result<()> {
                         for section in &c.sections {
                             if let Some(s) = section {
                                 if let Some(cr) = &s.renderdata {
-                                    let _center = Vec3::new(
+                                    let _center = Vector3::new(
                                         (cr.position.0 * 16 + 8) as f32,
                                         (cr.position.1 * 16) as f32 + 8.,
                                         (cr.position.2 * 16 + 8) as f32,
@@ -923,15 +928,16 @@ async fn main() -> anyhow::Result<()> {
                                         continue;
                                     }
 
-                                    let chunkpos_real = Vec3::new(
+                                    let chunkpos_real = Vector3::new(
                                         (cr.position.0 * 16) as f32,
                                         (cr.position.1 * 16) as f32,
                                         (cr.position.2 * 16) as f32,
                                     );
 
-                                    let chunk_transform = Mat4::from_translation(chunkpos_real);
+                                    let chunk_transform = Matrix4::from_translation(chunkpos_real);
 
-                                    if chunkpos_real.distance(camera.position)
+                                    if chunkpos_real
+                                        .distance(camera.position.to_homogeneous().xyz())
                                         < (render_distance as f32 * 2. * 16.)
                                     {
                                         let aabb = collision::Aabb3 {

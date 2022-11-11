@@ -1,4 +1,4 @@
-use glam::IVec3;
+use cgmath::Vector3;
 
 use crate::world::{ChunkManager, ChunkSectionData};
 
@@ -112,7 +112,7 @@ pub fn mesh_chunk(
     // cm: &ChunkManager,
     c: &ChunkSectionData,
 ) -> (Vec<ChunkVertex>, Vec<u16>) {
-    let base = IVec3::new(coords.0 * 16, coords.1 as i32 * 16, coords.2 * 16);
+    let base = Vector3::<i32>::new(coords.0 * 16, coords.1 as i32 * 16, coords.2 * 16);
     let (mut vertices, mut indices) = (vec![], vec![]);
     let mut ic = 0;
 
