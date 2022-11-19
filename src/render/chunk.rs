@@ -1,7 +1,7 @@
 use cgmath::Point3;
 use wgpu::{include_spirv, util::DeviceExt, RenderPass};
 
-use crate::world::ChunkSectionData;
+use crate::world::{ChunkManager, ChunkSectionData};
 
 use super::{
     chunk_mesher::{self, ChunkVertex},
@@ -21,9 +21,9 @@ impl ChunkRenderData {
     pub fn new_from_chunk(
         device: &wgpu::Device,
         coords: (i32, i32, i32),
-        c: &ChunkSectionData,
+        cm: &ChunkManager,
     ) -> Self {
-        let (vertex_data, index_data) = chunk_mesher::mesh_chunk(coords, c);
+        let (vertex_data, index_data) = chunk_mesher::mesh_chunk(coords, cm);
         Self {
             position: coords,
             vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

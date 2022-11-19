@@ -246,10 +246,43 @@ impl ChunkManager {
 
     pub fn set_block(&mut self, bx: i32, by: i32, bz: i32, block: u8) {
         let ccoord = chunk_coord!(bx, by, bz);
+        let (rx, ry, rz) = (bx % 16, by % 16, bz % 16);
         if let Some(chunk) = self.get_mut(&(ccoord.0, ccoord.2)) {
-            if let Some(Some(section)) = chunk.sections.get_mut(ccoord.1 as usize) {
+            if let Some(section) = chunk.get_section_mut(ccoord.1 as u8) {
                 section.set_block(bx, by, bz, block);
             }
+
+            if ry == 0 {
+                chunk
+                    .get_section_mut((ccoord.1 - 1) as u8)
+                    .map(|c| c.dirty = true);
+            }
+
+            if ry == 15 {
+                chunk
+                    .get_section_mut((ccoord.1 + 1) as u8)
+                    .map(|c| c.dirty = true);
+            }
+        }
+
+        if rx == 0 {
+            self.get_mut(&(ccoord.0 - 1, ccoord.2))
+                .map(|c| c.get_section_mut(ccoord.1 as u8).map(|c| c.dirty = true));
+        }
+
+        if rx == 15 {
+            self.get_mut(&(ccoord.0 + 1, ccoord.2))
+                .map(|c| c.get_section_mut(ccoord.1 as u8).map(|c| c.dirty = true));
+        }
+
+        if rz == 0 {
+            self.get_mut(&(ccoord.0, ccoord.2 - 1))
+                .map(|c| c.get_section_mut(ccoord.1 as u8).map(|c| c.dirty = true));
+        }
+
+        if rz == 15 {
+            self.get_mut(&(ccoord.0, ccoord.2 + 1))
+                .map(|c| c.get_section_mut(ccoord.1 as u8).map(|c| c.dirty = true));
         }
     }
 

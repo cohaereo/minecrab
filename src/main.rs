@@ -845,19 +845,14 @@ async fn main() -> anyhow::Result<()> {
                     })
                     .sum::<usize>();
 
+                let mut dirty_chunks = vec![];
                 if dirty_chunk_count != 0 {
                     let mut chunk_meshing_quota = 8;
                     for (coord, chunk) in chunks.chunks.iter_mut() {
                         for cy in 0..16 {
                             if let Some(cd) = chunk.get_section_mut(cy) {
                                 if cd.dirty {
-                                    cd.renderdata = Some(ChunkRenderData::new_from_chunk(
-                                        // &chunks,
-                                        &device,
-                                        (coord.0, cy as i32, coord.1),
-                                        cd,
-                                    ));
-                                    cd.dirty = false;
+                                    dirty_chunks.push((coord.0, cy, coord.1));
 
                                     chunk_meshing_quota -= 1;
                                 }
@@ -866,6 +861,27 @@ async fn main() -> anyhow::Result<()> {
 
                         if chunk_meshing_quota == 0 {
                             break;
+                        }
+                    }
+                }
+
+                // dirty_chunks.dedup();
+
+                for c in &mut dirty_chunks {
+                    if chunks.get(&(c.0, c.2)).is_some() && c.1 < 16 {
+                        let rd = ChunkRenderData::new_from_chunk(
+                            // &chunks,
+                            &device,
+                            (c.0, c.1 as i32, c.2),
+                            &chunks,
+                        );
+
+                        if let Some(cd) = chunks
+                            .get_mut(&(c.0, c.2))
+                            .and_then(|cc| cc.get_section_mut(c.1))
+                        {
+                            cd.renderdata = Some(rd);
+                            cd.dirty = false;
                         }
                     }
                 }

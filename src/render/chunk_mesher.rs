@@ -109,8 +109,8 @@ fn vertex_ao(side1: bool, side2: bool, corner: bool) -> u8 {
 // TODO: This currently uses the chunk manager for every block, we can check all the blocks inside the chunks without it.
 pub fn mesh_chunk(
     coords: (i32, i32, i32),
-    // cm: &ChunkManager,
-    c: &ChunkSectionData,
+    cm: &ChunkManager,
+    // c: &ChunkSectionData,
 ) -> (Vec<ChunkVertex>, Vec<u16>) {
     let base = Vector3::<i32>::new(coords.0 * 16, coords.1 as i32 * 16, coords.2 * 16);
     let (mut vertices, mut indices) = (vec![], vec![]);
@@ -119,19 +119,18 @@ pub fn mesh_chunk(
     macro_rules! get_block {
         ($x:expr, $y:expr, $z:expr) => {
             // if $x >= 0 && $x < 16 && $y >= 0 && $y < 16 && $z >= 0 && $z < 16 {
-            if $x >= base.x
-                && $x < (base.x + 16)
-                && $y >= base.y
-                && $y < (base.y + 16)
-                && $z >= base.z
-                && $z < (base.z + 16)
-            {
-                c.get_block($x, $y, $z)
-            } else {
-                // c.get_block($x, $y, $z)
-                0
-                // cm.get_block($x, $y, $z)
-            }
+            // if $x >= base.x
+            //     && $x < (base.x + 16)
+            //     && $y >= base.y
+            //     && $y < (base.y + 16)
+            //     && $z >= base.z
+            //     && $z < (base.z + 16)
+            // {
+            //     c.get_block($x, $y, $z)
+            // } else {
+            //     0
+            cm.get_block($x, $y, $z)
+            // }
         };
     }
 
@@ -220,9 +219,10 @@ pub fn mesh_chunk(
     for x in 0..16 {
         for z in 0..16 {
             for y in 0..16 {
-                let block = c.get_block(x, y, z);
+                let block = cm.get_block(base.x + x, base.y + y, base.z + z);
                 if block != 0 {
-                    let (nup, ndown, nleft, nright, nfront, nback) = c.get_neighbors(x, y, z);
+                    let (nup, ndown, nleft, nright, nfront, nback) =
+                        cm.get_neighbors(base.x + x, base.y + y, base.z + z);
                     // get_neighbors!(base.x + x, base.y + y, base.z + z);
 
                     // let (nup, ndown, nleft, nright, nfront, nback) =
