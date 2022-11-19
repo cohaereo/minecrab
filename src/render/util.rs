@@ -3,9 +3,9 @@ use collision::Frustum;
 use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
 
 pub struct Camera {
-    up: Vector3<f32>,
-    front: Vector3<f32>,
-    right: Vector3<f32>,
+    pub up: Vector3<f32>,
+    pub front: Vector3<f32>,
+    pub right: Vector3<f32>,
     pub position: Point3<f32>,
     pub orientation: Vector2<f32>,
     pub aspect: f32,

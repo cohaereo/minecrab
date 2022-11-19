@@ -9,14 +9,15 @@ edition = "2021"
 anyhow = "1"
 bytemuck = { version = "1.12", features = ["derive"] }
 byteorder = "1.4"
-cgmath = { version = "0.17", features = ["swizzle"] }
+cgmath = { version = "0.17", features = ["swizzle", "mint"] }
 clap = { version = "4.0.19", features = ["derive"] }
+cpal = "0.13"
 collision = "0.20.1"
 flate2 = "1.0"
 fnv = "1.0.7"
 font-awesome = "0.2"
 futures = "0.3"
-# glam = { version = "0.21", features = ["bytemuck"] }
+glob = "0.3.0"
 hecs = "0.9"
 hematite-nbt = "0.5.2"
 hex = "0.4"
@@ -25,11 +26,14 @@ imgui = "0.8"
 imgui-wgpu = "0.20"
 imgui-winit-support = { version = "0.8", features = ["winit-26"] }
 intmap = "2.0.0"
+lewton = "0.10"
 log = "0.4"
 minecrab_derive = { path = "./minecrab_derive" }
 nibble_vec = "0.1.0"
+oddio = "0.6"
 pretty_env_logger = "0.4"
 profiling = { version = "1.0.7", features = ["profile-with-tracy"] }
+rand = "0.8"
 raw-cpuid = "10.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

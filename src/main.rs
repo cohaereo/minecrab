@@ -6,12 +6,14 @@ mod build_info {
     include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 }
 
-use cgmath::{Matrix4, MetricSpace, Point3, Vector2, Vector3};
+use cgmath::{Euler, Matrix4, MetricSpace, Point3, Quaternion, Rotation, Vector2, Vector3};
 use flate2::read::ZlibDecoder;
+use rand::Rng;
 use tokio::{net::TcpStream, sync::mpsc};
 
 use std::{
     io::{Cursor, Read},
+    sync::Arc,
     time::Instant,
 };
 
@@ -21,6 +23,7 @@ use wgpu::util::DeviceExt;
 use world::ChunkManager;
 
 use crate::{
+    audio::AudioManager,
     ecs::{update_interpolation, update_velocity, InterpolatedPosition, Position, Velocity},
     net::codec::MinecraftCodec,
     render::{
@@ -39,6 +42,7 @@ use winit::{
     window::WindowBuilder,
 };
 
+mod audio;
 mod ecs;
 mod fixed_point;
 mod net;
@@ -268,6 +272,9 @@ async fn main() -> anyhow::Result<()> {
                         net::packets::Packet::SpawnEntity { .. } => main_tx.send(pp).await.unwrap(),
                         net::packets::Packet::ScoreboardScore(p) => println!("{:?}", p),
                         net::packets::Packet::ScoreboardObjective(p) => println!("{:?}", p),
+                        net::packets::Packet::NamedSoundEffect { .. } => {
+                            main_tx.send(pp).await.unwrap()
+                        }
                         net::packets::Packet::SpawnEntityLiving { .. } => {
                             main_tx.send(pp).await.unwrap()
                         }
@@ -520,6 +527,7 @@ async fn main() -> anyhow::Result<()> {
     let debuglines = DebugLineRenderer::new_chunklines(&device);
     let debugcube = DebugCubeRenderer::new(&device);
 
+    let mut audio_manager = AudioManager::new();
     let mut cursor_grabbed = false;
     let mut frame_count = 0;
     let mut last_frame = Instant::now();
@@ -596,6 +604,16 @@ async fn main() -> anyhow::Result<()> {
 
                 update_velocity(&mut world, frame_delta);
                 update_interpolation(&mut world, frame_delta);
+
+                audio_manager.maintain();
+                audio_manager.set_listener_transform(
+                    camera.position,
+                    Quaternion::from(Euler {
+                        x: cgmath::Deg(0.),
+                        y: cgmath::Deg(180.0 - camera.orientation.y),
+                        z: cgmath::Deg(0.),
+                    }),
+                );
 
                 // * Receive chunks
                 // ! Yes i know doing this just before rendering a frame isn't great but it doesnt need to be yet.
@@ -766,6 +784,34 @@ async fn main() -> anyhow::Result<()> {
                                     let eid = ecs::get_or_insert(&mut world, e);
                                     world.despawn(eid).ok();
                                 }
+                            }
+                            net::packets::Packet::NamedSoundEffect(p) => {
+                                let path_glob = format!(
+                                    "assets/minecraft/sounds/{}*.ogg",
+                                    p.sound_name.replace('.', "/")
+                                );
+                                if let Ok(paths) = glob::glob(&path_glob) {
+                                    let paths: Vec<std::path::PathBuf> =
+                                        paths.filter(|p| p.is_ok()).map(|p| p.unwrap()).collect();
+                                    println!("{:?}", p);
+                                    if paths.len() > 0 {
+                                        let r = rand::thread_rng().gen::<usize>();
+                                        let path = paths[r % paths.len()]
+                                            .clone()
+                                            .into_os_string()
+                                            .into_string()
+                                            .unwrap();
+                                        audio_manager
+                                            .play(
+                                                &path,
+                                                [p.x as f32 / 8., p.y as f32 / 8., p.z as f32 / 8.]
+                                                    .into(),
+                                                p.volume,
+                                                p.pitch as f32 / 63.,
+                                            )
+                                            .ok();
+                                    }
+                                };
                             }
                             net::packets::Packet::PositionClientbound(p) => {
                                 camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
