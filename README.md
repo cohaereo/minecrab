@@ -6,6 +6,8 @@ MineCrab is a Minecraft client written in Rust+WGPU, capable of connecting to of
 - ! Code quality is abysmal as of right now, restructuring is in progress
 ```
 
+![Screenshot](screenshot.png)
+
 ## Supported versions
 
 MineCrab currently only supports 1.7.10, but I'm aiming to support every major version from 1.7 to the latest version (which is 1.19.2 as of writing this).
@@ -34,7 +36,6 @@ Every version has 3 degrees of support:
   - [x] Basic rendering
   - [ ] Occlusion culling
   - [x] Frustum culling
-    - [ ] Current algorithm needs to be replaced
   - [ ] Anti-aliasing
   - [ ] Biomes
   - [ ] Chunk animations
