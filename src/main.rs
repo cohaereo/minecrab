@@ -326,7 +326,7 @@ async fn main() -> anyhow::Result<()> {
     let surface = unsafe { instance.create_surface(&window) };
     let adapter =
         futures::executor::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
+            power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
@@ -334,7 +334,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (device, queue) = futures::executor::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
-            features: wgpu::Features::PUSH_CONSTANTS | wgpu::Features::POLYGON_MODE_LINE,
+            features: wgpu::Features::PUSH_CONSTANTS,
             limits: wgpu::Limits {
                 max_push_constant_size: 32,
                 ..Default::default()
