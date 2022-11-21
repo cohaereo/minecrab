@@ -204,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
     // ! Unholy.
     let (main_tx, mut main_rx) = mpsc::channel::<net::packets::Packet>(256);
     let write_tx_net = write_tx.clone();
-    tokio::spawn(async move {
+    let thread_net_recv = tokio::spawn(async move {
         'game: loop {
             let rp = MinecraftCodec::read(&mut conn_read).await.unwrap();
             match net::versions::v1_7_10::decode_packet(
@@ -289,6 +289,10 @@ async fn main() -> anyhow::Result<()> {
                         }
                         net::packets::Packet::Disconnect(p) => {
                             warn!("Disconnected: {}", p.reason);
+                            break 'game;
+                        }
+                        net::packets::Packet::KickDisconnect(p) => {
+                            warn!("Kicked: {}", p.reason);
                             break 'game;
                         }
                         _ => {}
@@ -969,6 +973,10 @@ async fn main() -> anyhow::Result<()> {
                         ui.text(format!("{:?} - {:?}", e, pos));
                     }
                 });
+
+                if thread_net_recv.is_finished() {
+                    *control_flow = ControlFlow::Exit;
+                }
 
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Render Encoder"),
