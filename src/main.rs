@@ -312,9 +312,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap();
     let size = window.inner_size();
 
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
     info!("Available devices:");
-    for b in instance.enumerate_adapters(wgpu::Backends::all()) {
+    for b in instance.enumerate_adapters(wgpu::Backends::PRIMARY) {
         info!(
             "\t- {} on {:?} (features {:b})",
             b.get_info().name,
@@ -391,6 +391,7 @@ async fn main() -> anyhow::Result<()> {
 
     let dcube_texture = texture::Texture::load_png(&device, &queue, "block_debug.png");
     let atlas_texture = texture::Texture::load_png(&device, &queue, "atlas.png");
+
     let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
