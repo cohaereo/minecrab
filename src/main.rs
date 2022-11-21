@@ -890,6 +890,20 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
+                chunks.chunks.retain(|c, _| {
+                    let chunkpos_real = Vector2::new(c.0 as f32, c.1 as f32) * 16.;
+
+                    // Unload chunk when it goes out of range (1.25 * render distance)
+                    // ! currently uses hardcoded distance of 24 until i figure out a better way to determine unload distance (may cause problems if the server has a higher render distance)
+                    if chunkpos_real.distance(camera.position.to_homogeneous().xz())
+                        > (24. * 2. * 16.)
+                    {
+                        false
+                    } else {
+                        true
+                    }
+                });
+
                 // Send player position every tick
                 // FIXME: If you dont have vsync enabled (or a 60hz monitor) this is going to hurt
                 if frame_count % 3 == 0 {
@@ -1029,10 +1043,10 @@ async fn main() -> anyhow::Result<()> {
                                     }
 
                                     let chunkpos_real = Vector3::new(
-                                        (cr.position.0 * 16) as f32,
-                                        (cr.position.1 * 16) as f32,
-                                        (cr.position.2 * 16) as f32,
-                                    );
+                                        cr.position.0 as f32,
+                                        cr.position.1 as f32,
+                                        cr.position.2 as f32,
+                                    ) * 16.;
 
                                     if chunkpos_real
                                         .distance(camera.position.to_homogeneous().xyz())
@@ -1060,6 +1074,7 @@ async fn main() -> anyhow::Result<()> {
                                             chunks_rendered += 1;
                                         }
                                     }
+
                                     total_chunks += 1;
                                 }
                             }
