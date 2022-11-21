@@ -51,6 +51,7 @@ Every version has 3 degrees of support:
   - [ ] Enchanting table
   - [ ] Anvil
   - [ ] Sign editor
+  - [ ] Chat
 - [ ] Sound
 - [ ] Plugin system
   - [ ] Basics
