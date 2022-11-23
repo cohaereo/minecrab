@@ -540,6 +540,7 @@ async fn main() -> anyhow::Result<()> {
     let mut total_chunks = 0;
     let mut render_distance = 16;
     let mut chunklines_shown = false;
+    let mut chatmsg_buf = String::new();
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::DeviceEvent { ref event, .. } => match event {
@@ -981,6 +982,23 @@ async fn main() -> anyhow::Result<()> {
                 imgui::Window::new("Settings").build(&ui, || {
                     imgui::Slider::new("Render distance", 2, 64).build(&ui, &mut render_distance);
                     imgui::Slider::new("FOV", 30., 110.).build(&ui, &mut camera.fovy);
+                });
+
+                imgui::Window::new("Chat").build(&ui, || {
+                    ui.input_text("Message", &mut chatmsg_buf).build();
+                    if ui.button("Send") {
+                        write_tx
+                            .try_send((
+                                net::ClientState::Play,
+                                net::packets::Packet::ChatServerbound(
+                                    net::packets::play::serverbound::ChatServerbound {
+                                        message: chatmsg_buf.clone(),
+                                    },
+                                ),
+                            ))
+                            .ok();
+                        chatmsg_buf.clear();
+                    }
                 });
 
                 imgui::Window::new("Entities").build(&ui, || {
