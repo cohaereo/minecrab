@@ -1,6 +1,6 @@
 use cgmath::Vector3;
 
-use crate::world::{ChunkManager, ChunkSectionData};
+use crate::world::{ChunkManager};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

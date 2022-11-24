@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Matrix4, One, Point3, Vector2, Vector3, Vector4, Zero};
+use cgmath::{InnerSpace, Matrix4, One, Point3, Vector2, Vector3, Zero};
 use collision::Frustum;
 use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
 

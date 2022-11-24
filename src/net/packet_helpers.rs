@@ -108,13 +108,13 @@ macro_rules! packet_ids {
         })+
     })+) => {
         use crate::net::packet_helpers::Serializable;
-        use crate::net::{ClientState, PacketDirection};
+        use crate::net::{ConnectionState, PacketDirection};
 
-        pub fn decode_packet(p: &crate::net::codec::RawPacket, state: crate::net::ClientState, dir: crate::net::PacketDirection) -> anyhow::Result<crate::net::packets::Packet> {
+        pub fn decode_packet(p: &crate::net::codec::RawPacket, state: crate::net::ConnectionState, dir: crate::net::PacketDirection) -> anyhow::Result<crate::net::packets::Packet> {
             let mut reader = std::io::Cursor::new(&p.data);
             let r = match state {
                     $( // State
-                    ClientState::$tstate => {
+                    ConnectionState::$tstate => {
                         match dir {
                             $( // Direction
                                 PacketDirection::$tdir => {
@@ -144,7 +144,7 @@ macro_rules! packet_ids {
             Ok(r)
         }
 
-        pub fn encode_packet(p: &crate::net::packets::Packet, state: crate::net::ClientState, dir: crate::net::PacketDirection) -> anyhow::Result<crate::net::codec::RawPacket> {
+        pub fn encode_packet(p: &crate::net::packets::Packet, state: crate::net::ConnectionState, dir: crate::net::PacketDirection) -> anyhow::Result<crate::net::codec::RawPacket> {
             let mut rp = crate::net::codec::RawPacket {
                 id: 0,
                 data: vec![],
@@ -155,7 +155,7 @@ macro_rules! packet_ids {
 
             match state {
                     $( // State
-                    ClientState::$tstate => {
+                    ConnectionState::$tstate => {
                         match dir {
                             $( // Direction
                                 PacketDirection::$tdir => {

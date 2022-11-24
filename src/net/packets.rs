@@ -43,7 +43,7 @@ packet_structs! {
                 public_key: PrefixedVec<u8, i16>,
                 verify_token: PrefixedVec<u8, i16>,
             }
-            packet Success {
+            packet LoginSuccess {
                 uuid: String,
                 username: String,
             }

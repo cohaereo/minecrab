@@ -6,14 +6,13 @@ mod build_info {
     include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 }
 
-use cgmath::{Euler, Matrix4, MetricSpace, Point3, Quaternion, Rotation, Vector2, Vector3};
+use cgmath::{Euler, MetricSpace, Point3, Quaternion, Vector2, Vector3};
 use flate2::read::ZlibDecoder;
 use rand::Rng;
-use tokio::{net::TcpStream, sync::mpsc};
+use tokio::net::TcpStream;
 
 use std::{
     io::{Cursor, Read},
-    sync::Arc,
     time::Instant,
 };
 
@@ -25,7 +24,7 @@ use world::ChunkManager;
 use crate::{
     audio::AudioManager,
     ecs::{update_interpolation, update_velocity, InterpolatedPosition, Position, Velocity},
-    net::codec::MinecraftCodec,
+    net::{connection::ClientConnection, ConnectionState, ProtocolVersion},
     render::{
         chunk::{ChunkRenderData, ChunkRenderer},
         chunk_debug::DebugLineRenderer,
@@ -68,27 +67,6 @@ struct CliArgs {
     username: String,
 }
 
-fn print_packet_filtered(p: &net::packets::Packet) {
-    match p {
-        net::packets::Packet::MapChunk { .. }
-        | net::packets::Packet::MapChunkBulk { .. }
-        | net::packets::Packet::RelEntityMove { .. }
-        | net::packets::Packet::EntityVelocity { .. }
-        | net::packets::Packet::EntityMoveLook { .. }
-        | net::packets::Packet::EntityHeadRotation { .. }
-        | net::packets::Packet::EntityMetadata { .. }
-        | net::packets::Packet::EntityDestroy { .. }
-        | net::packets::Packet::UpdateAttributes { .. }
-        | net::packets::Packet::SpawnEntity { .. }
-        | net::packets::Packet::SpawnEntityLiving { .. }
-        | net::packets::Packet::NamedEntitySpawn { .. }
-        | net::packets::Packet::EntityLook { .. } => {
-            return;
-        }
-        _ => debug!("{:?}", p),
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
@@ -99,53 +77,28 @@ async fn main() -> anyhow::Result<()> {
 
     let mut chunks = ChunkManager::new();
 
-    let (mut conn_read, mut conn_write) =
-        TcpStream::connect(format!("{}:{}", args.address, args.port))
-            .await?
-            .into_split();
+    let stream = TcpStream::connect(format!("{}:{}", args.address, args.port)).await?;
+    let mut connection = ClientConnection::from_stream(stream, ProtocolVersion::Proto1_7_6);
 
-    let (write_tx, mut write_rx) =
-        tokio::sync::mpsc::channel::<(net::ClientState, net::packets::Packet)>(128);
-    tokio::spawn(async move {
-        loop {
-            if let Some((state, p)) = write_rx.recv().await {
-                if let Ok(rp) =
-                    net::versions::v1_7_10::encode_packet(&p, state, net::PacketDirection::Server)
-                {
-                    MinecraftCodec::write(&mut conn_write, &rp).await.unwrap();
-                }
-            } else {
-                // Channel is closed, exit thread
-                break;
-            }
-        }
-    });
+    connection.write(&net::packets::Packet::SetProtocol(
+        net::packets::handshaking::serverbound::SetProtocol {
+            protocol_version: varint::VarInt(5),
+            server_host: args.address,
+            server_port: args.port,
+            next_state: varint::VarInt(2),
+        },
+    ))?;
 
-    write_tx
-        .send((
-            net::ClientState::Handshaking,
-            net::packets::Packet::SetProtocol(
-                net::packets::handshaking::serverbound::SetProtocol {
-                    protocol_version: varint::VarInt(5),
-                    server_host: args.address,
-                    server_port: args.port,
-                    next_state: varint::VarInt(2),
-                },
-            ),
-        ))
-        .await?;
-
-    write_tx
-        .send((
-            net::ClientState::Login,
-            net::packets::Packet::LoginStart(net::packets::login::serverbound::LoginStart {
-                username: args.username,
-            }),
-        ))
-        .await?;
+    connection.write(&net::packets::Packet::LoginStart(
+        net::packets::login::serverbound::LoginStart {
+            username: args.username,
+        },
+    ))?;
 
     // Wait for login success
-    while MinecraftCodec::read(&mut conn_read).await?.id != 2 {}
+    while connection.state != ConnectionState::Play {
+        connection.read();
+    }
 
     let mut camera = Camera::new();
     camera.aspect = 1600 as f32 / 900 as f32;
@@ -153,155 +106,30 @@ async fn main() -> anyhow::Result<()> {
     // Wait for player pos
 
     'w: loop {
-        let rp = MinecraftCodec::read(&mut conn_read).await?;
+        match connection.read() {
+            Some(net::packets::Packet::PositionClientbound(p)) => {
+                camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
+                camera.orientation = Vector2::new(p.pitch, p.yaw);
+                connection.write(&net::packets::Packet::PositionLook(
+                    net::packets::play::serverbound::PositionLook {
+                        x: p.x,
+                        stance: p.y - 1.62,
+                        y: p.y,
+                        z: p.z,
+                        yaw: p.yaw,
+                        pitch: p.pitch,
+                        on_ground: p.on_ground,
+                    },
+                ))?;
 
-        match net::versions::v1_7_10::decode_packet(
-            &rp,
-            net::ClientState::Play,
-            net::PacketDirection::Client,
-        ) {
-            Ok(pp) => {
-                print_packet_filtered(&pp);
-                match pp {
-                    net::packets::Packet::PositionClientbound(p) => {
-                        camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
-                        camera.orientation = Vector2::new(p.pitch, p.yaw);
-                        write_tx
-                            .send((
-                                net::ClientState::Play,
-                                net::packets::Packet::PositionLook(
-                                    net::packets::play::serverbound::PositionLook {
-                                        x: p.x,
-                                        stance: p.y - 1.62,
-                                        y: p.y,
-                                        z: p.z,
-                                        yaw: p.yaw,
-                                        pitch: p.pitch,
-                                        on_ground: p.on_ground,
-                                    },
-                                ),
-                            ))
-                            .await?;
-
-                        write_tx
-                            .send((
-                                net::ClientState::Play,
-                                net::packets::Packet::ClientCommand(
-                                    net::packets::play::serverbound::ClientCommand { payload: 0 },
-                                ),
-                            ))
-                            .await?;
-                        break 'w;
-                    }
-                    _ => {}
-                }
+                connection.write(&net::packets::Packet::ClientCommand(
+                    net::packets::play::serverbound::ClientCommand { payload: 0 },
+                ))?;
+                break 'w;
             }
             _ => {}
         }
     }
-
-    // Switch packet handling to a new thread
-    // ! Unholy.
-    let (main_tx, mut main_rx) = mpsc::channel::<net::packets::Packet>(256);
-    let write_tx_net = write_tx.clone();
-    let thread_net_recv = tokio::spawn(async move {
-        'game: loop {
-            let rp = MinecraftCodec::read(&mut conn_read).await.unwrap();
-            match net::versions::v1_7_10::decode_packet(
-                &rp,
-                net::ClientState::Play,
-                net::PacketDirection::Client,
-            ) {
-                Ok(pp) => {
-                    print_packet_filtered(&pp);
-                    match pp {
-                        net::packets::Packet::KeepAliveClientbound(t) => {
-                            write_tx_net
-                                .send((
-                                    net::ClientState::Play,
-                                    net::packets::Packet::KeepAliveServerbound(
-                                        net::packets::play::serverbound::KeepAliveServerbound {
-                                            keep_alive_id: t.keep_alive_id,
-                                        },
-                                    ),
-                                ))
-                                .await
-                                .unwrap();
-                        }
-                        net::packets::Packet::PositionClientbound(ref p) => {
-                            main_tx.send(pp.clone()).await.unwrap();
-                            write_tx_net
-                                .send((
-                                    net::ClientState::Play,
-                                    net::packets::Packet::PositionLook(
-                                        net::packets::play::serverbound::PositionLook {
-                                            x: p.x,
-                                            stance: p.y - 1.62,
-                                            y: p.y,
-                                            z: p.z,
-                                            yaw: p.yaw,
-                                            pitch: p.pitch,
-                                            on_ground: p.on_ground,
-                                        },
-                                    ),
-                                ))
-                                .await
-                                .unwrap();
-                        }
-                        net::packets::Packet::Respawn { .. } => main_tx.send(pp).await.unwrap(),
-                        net::packets::Packet::MapChunkBulk { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::MapChunk { .. } => main_tx.send(pp).await.unwrap(),
-                        net::packets::Packet::BlockChange { .. } => main_tx.send(pp).await.unwrap(),
-                        net::packets::Packet::EntityDestroy { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::EntityMoveLook { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::EntityTeleport { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::RelEntityMove { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::EntityVelocity { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::SpawnEntity { .. } => main_tx.send(pp).await.unwrap(),
-                        net::packets::Packet::ScoreboardScore(p) => println!("{:?}", p),
-                        net::packets::Packet::ScoreboardObjective(p) => println!("{:?}", p),
-                        net::packets::Packet::NamedSoundEffect { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::SpawnEntityLiving { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::NamedEntitySpawn { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::MultiBlockChange { .. } => {
-                            main_tx.send(pp).await.unwrap()
-                        }
-                        net::packets::Packet::ChatClientbound(p) => {
-                            info!("Chat message: {}", p.message);
-                        }
-                        net::packets::Packet::Disconnect(p) => {
-                            warn!("Disconnected: {}", p.reason);
-                            break 'game;
-                        }
-                        net::packets::Packet::KickDisconnect(p) => {
-                            warn!("Kicked: {}", p.reason);
-                            break 'game;
-                        }
-                        _ => {}
-                    }
-                }
-                Err(e) => error!("Error decoding packet 0x{:x}: {}", rp.id, e),
-            }
-        }
-    });
 
     #[cfg(target_os = "linux")]
     std::env::set_var("WINIT_UNIX_BACKEND", "x11");
@@ -623,9 +451,9 @@ async fn main() -> anyhow::Result<()> {
 
                 // * Receive chunks
                 // ! Yes i know doing this just before rendering a frame isn't great but it doesnt need to be yet.
-                let mut packet_quota = 64;
+                let mut packet_quota = 256;
                 loop {
-                    if let Ok(p) = main_rx.try_recv() {
+                    if let Some(p) = connection.read() {
                         match p {
                             net::packets::Packet::MapChunkBulk(p) => {
                                 let mut data_offset = 0;
@@ -909,20 +737,17 @@ async fn main() -> anyhow::Result<()> {
                 // Send player position every tick
                 // FIXME: If you dont have vsync enabled (or a 60hz monitor) this is going to hurt
                 if frame_count % 3 == 0 {
-                    write_tx
-                        .try_send((
-                            net::ClientState::Play,
-                            net::packets::Packet::PositionLook(
-                                net::packets::play::serverbound::PositionLook {
-                                    x: camera.position.x as f64,
-                                    stance: camera.position.y as f64 - 1.62,
-                                    y: camera.position.y as f64,
-                                    z: camera.position.z as f64,
-                                    yaw: camera.orientation.y,
-                                    pitch: camera.orientation.x,
-                                    on_ground: false,
-                                },
-                            ),
+                    connection
+                        .write(&net::packets::Packet::PositionLook(
+                            net::packets::play::serverbound::PositionLook {
+                                x: camera.position.x as f64,
+                                stance: camera.position.y as f64 - 1.62,
+                                y: camera.position.y as f64,
+                                z: camera.position.z as f64,
+                                yaw: camera.orientation.y,
+                                pitch: camera.orientation.x,
+                                on_ground: false,
+                            },
                         ))
                         .ok();
                 }
@@ -987,14 +812,11 @@ async fn main() -> anyhow::Result<()> {
                 imgui::Window::new("Chat").build(&ui, || {
                     ui.input_text("Message", &mut chatmsg_buf).build();
                     if ui.button("Send") {
-                        write_tx
-                            .try_send((
-                                net::ClientState::Play,
-                                net::packets::Packet::ChatServerbound(
-                                    net::packets::play::serverbound::ChatServerbound {
-                                        message: chatmsg_buf.clone(),
-                                    },
-                                ),
+                        connection
+                            .write(&net::packets::Packet::ChatServerbound(
+                                net::packets::play::serverbound::ChatServerbound {
+                                    message: chatmsg_buf.clone(),
+                                },
                             ))
                             .ok();
                         chatmsg_buf.clear();
@@ -1007,9 +829,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
 
-                if thread_net_recv.is_finished() {
-                    *control_flow = ControlFlow::Exit;
-                }
+                // if thread_net_recv.is_finished() {
+                //     *control_flow = ControlFlow::Exit;
+                // }
 
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Render Encoder"),

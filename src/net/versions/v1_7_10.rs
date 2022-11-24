@@ -1,7 +1,7 @@
 use crate::packet_ids;
 
 // TODO: We shouldn't have to import this, at least not like this
-use crate::net::ClientState::*;
+use crate::net::ConnectionState::*;
 use crate::net::PacketDirection::*;
 
 packet_ids! {
@@ -26,7 +26,7 @@ packet_ids! {
         clientbound Client {
                 0x00 => Disconnect,
                 0x01 => EncryptionBeginClientbound,
-                0x02 => Success,
+                0x02 => LoginSuccess,
         }
         serverbound Server {
                 0x00 => LoginStart,

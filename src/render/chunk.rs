@@ -1,7 +1,7 @@
 use cgmath::Point3;
 use wgpu::{include_spirv, util::DeviceExt, RenderPass};
 
-use crate::world::{ChunkManager, ChunkSectionData};
+use crate::world::{ChunkManager};
 
 use super::{
     chunk_mesher::{self, ChunkVertex},

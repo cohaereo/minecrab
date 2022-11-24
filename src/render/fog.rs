@@ -1,6 +1,6 @@
 use wgpu::include_spirv;
 
-use super::texture;
+
 
 pub struct FogRenderer;
 impl FogRenderer {

@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use cgmath::{MetricSpace, Point3, Vector3, Zero};
+use cgmath::{Point3, Vector3, Zero};
 use hecs::{Entity, World};
 
 // In units (aka blocks) per second
@@ -18,7 +18,7 @@ pub struct InterpolatedPosition {
 pub struct Position(pub Point3<f32>);
 pub struct Velocity(pub Vector3<f32>);
 
-pub fn update_velocity(world: &mut World, delta: f32) {
+pub fn update_velocity(_world: &mut World, _delta: f32) {
     // for (e, (pos, vel)) in world.query::<(&mut Position, &Velocity)>().iter() {
     //     // FIXME: We're not moving in Y, because the lack of block collision makes mobs phase through the ground
     //     let temp_vel = Vector3::new(vel.0.x, 0., vel.0.z);
@@ -27,7 +27,7 @@ pub fn update_velocity(world: &mut World, delta: f32) {
 }
 
 pub fn update_interpolation(world: &mut World, delta: f32) {
-    for (e, (pos, interp)) in world
+    for (_e, (pos, interp)) in world
         .query::<(&mut Position, &mut InterpolatedPosition)>()
         .iter()
     {
