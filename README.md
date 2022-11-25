@@ -43,6 +43,7 @@ Every version has 3 degrees of support:
   - [ ] Entity models
   - [ ] Texture animations
   - [ ] GUI
+  - [ ] Optifine/Sodium shader support
 - [ ] GUI
   - [ ] Survival inventory
   - [ ] Creative inventory

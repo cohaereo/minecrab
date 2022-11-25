@@ -401,17 +401,28 @@ async fn main() -> anyhow::Result<()> {
                     WindowEvent::KeyboardInput { input, .. } => {
                         if let Some(kc) = input.virtual_keycode {
                             match kc {
-                                VirtualKeyCode::F4 => {
-                                    if input.state == ElementState::Pressed {
-                                        chunklines_shown = !chunklines_shown;
-                                    }
-                                }
                                 VirtualKeyCode::F1 => {
                                     if input.state == ElementState::Pressed {
                                         cursor_grabbed = !cursor_grabbed;
 
                                         window.set_cursor_grab(cursor_grabbed).ok();
                                         window.set_cursor_visible(!cursor_grabbed);
+                                    }
+                                }
+                                VirtualKeyCode::F4 => {
+                                    if input.state == ElementState::Pressed {
+                                        chunklines_shown = !chunklines_shown;
+                                    }
+                                }
+                                VirtualKeyCode::F6 => {
+                                    if input.state == ElementState::Pressed {
+                                        chunks.chunks.iter_mut().for_each(|c| {
+                                            c.1.sections.iter_mut().for_each(|cs| {
+                                                if let Some(cs) = cs {
+                                                    cs.dirty = true;
+                                                }
+                                            })
+                                        });
                                     }
                                 }
                                 _ => {}
@@ -804,6 +815,7 @@ async fn main() -> anyhow::Result<()> {
                             "Press F4 to {} chunk borders",
                             if chunklines_shown { "hide" } else { "show" }
                         ));
+                        ui.text(format!("Press F6 to reload chunks"));
                     });
 
                 imgui::Window::new("Settings").build(&ui, || {
