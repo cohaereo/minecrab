@@ -479,7 +479,7 @@ packet_structs! {
                 cursor_z: i8,
             }
             packet HeldItemSlot {
-                slot_id: i16,
+                slot_id: i8,
             }
             packet ArmAnimation {
                 entity_id: i32,
