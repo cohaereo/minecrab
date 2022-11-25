@@ -383,7 +383,10 @@ async fn main() -> anyhow::Result<()> {
                 ref event,
                 window_id,
             } if window_id == window.id() => {
-                camera_controller.process_events(event);
+                if !imgui_ctx.io().want_capture_keyboard {
+                    camera_controller.process_events(event);
+                }
+
                 match event {
                     WindowEvent::CloseRequested
                     | WindowEvent::KeyboardInput {
