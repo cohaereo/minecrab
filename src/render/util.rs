@@ -95,7 +95,6 @@ pub struct CameraController {
     is_right_pressed: bool,
     is_shift_pressed: bool,
     is_zoomed: bool,
-    boost: bool,
 }
 
 impl CameraController {
@@ -108,7 +107,6 @@ impl CameraController {
             is_right_pressed: false,
             is_shift_pressed: false,
             is_zoomed: false,
-            boost: false,
         }
     }
 
@@ -149,10 +147,6 @@ impl CameraController {
                         self.is_shift_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::LControl => {
-                        self.boost = is_pressed;
-                        true
-                    }
                     _ => false,
                 }
             }
@@ -183,11 +177,6 @@ impl CameraController {
         }
         if self.is_left_pressed {
             camera.position -= camera.right * velocity;
-        }
-
-        if self.boost {
-            camera.position += camera.front * 50.0;
-            self.boost = false;
         }
 
         camera.fov_scale = if self.is_zoomed { 0.25 } else { 1.0 };
