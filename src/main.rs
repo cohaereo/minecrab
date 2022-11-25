@@ -812,8 +812,12 @@ async fn main() -> anyhow::Result<()> {
                 });
 
                 imgui::Window::new("Chat").build(&ui, || {
-                    ui.input_text("Message", &mut chatmsg_buf).build();
-                    if ui.button("Send") {
+                    let enter_hit = ui
+                        .input_text("Message", &mut chatmsg_buf)
+                        .enter_returns_true(true)
+                        .build();
+
+                    if enter_hit || ui.button("Send") {
                         connection
                             .write(&net::packets::Packet::ChatServerbound(
                                 net::packets::play::serverbound::ChatServerbound {
