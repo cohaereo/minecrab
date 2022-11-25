@@ -1,8 +1,4 @@
-use tokio::{
-    net::{TcpStream},
-    sync::mpsc,
-    task::JoinHandle,
-};
+use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 
 use super::{
     codec::{MinecraftCodec, RawPacket},
@@ -86,7 +82,7 @@ impl ClientConnection {
                 Some(p)
             }
             Err(e) => {
-                error!("Error decoding packet: {}", e);
+                error!("Error decoding packet 0x{:x}: {}", data.id, e);
                 None
             }
         }

@@ -627,7 +627,6 @@ async fn main() -> anyhow::Result<()> {
                                 if let Ok(paths) = glob::glob(&path_glob) {
                                     let paths: Vec<std::path::PathBuf> =
                                         paths.filter(|p| p.is_ok()).map(|p| p.unwrap()).collect();
-                                    println!("{:?}", p);
                                     if paths.len() > 0 {
                                         let r = rand::thread_rng().gen::<usize>();
                                         let path = paths[r % paths.len()]
