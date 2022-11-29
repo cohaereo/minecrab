@@ -1,46 +1,14 @@
 use cgmath::Point3;
-use wgpu::{include_spirv, util::DeviceExt, RenderPass};
+use wgpu::{include_spirv, RenderPass};
 
-use crate::world::{ChunkManager};
-
-use super::{
-    chunk_mesher::{self, ChunkVertex},
-    texture,
-};
+use super::{chunk_mesher::ChunkVertex, texture};
 
 pub struct ChunkRenderData {
     // Position is in units of 16 blocks, xyz respectively
-    pub position: (i32, i32, i32),
+    pub position: Point3<i32>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub index_count: usize,
-    pub memory_usage: usize,
-}
-
-impl ChunkRenderData {
-    pub fn new_from_chunk(
-        device: &wgpu::Device,
-        coords: (i32, i32, i32),
-        cm: &ChunkManager,
-    ) -> Self {
-        let (vertex_data, index_data) = chunk_mesher::mesh_chunk(coords, cm);
-        Self {
-            position: coords,
-            vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Chunk vertex buffer"),
-                contents: bytemuck::cast_slice(&vertex_data),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-            index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Chunk index buffer"),
-                contents: bytemuck::cast_slice(&index_data),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
-            index_count: index_data.len(),
-            memory_usage: bytemuck::cast_slice::<ChunkVertex, u8>(&vertex_data).len()
-                + bytemuck::cast_slice::<u16, u8>(&index_data).len(),
-        }
-    }
 }
 
 #[repr(C, packed)]
@@ -60,7 +28,7 @@ impl ChunkRenderer {
         render_distance: u32,
     ) {
         let pc = ChunkRenderDataPushConstants {
-            chunk_coords: [cr.position.0, cr.position.1 as i32, cr.position.2],
+            chunk_coords: [cr.position.x, cr.position.y, cr.position.z],
             render_distance,
             camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z],
         };

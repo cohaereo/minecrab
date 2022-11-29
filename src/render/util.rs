@@ -155,7 +155,7 @@ impl CameraController {
     }
 
     pub fn process_mouse(&self, camera: &mut Camera, delta: (f64, f64)) {
-        let mut offset = Vector2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.35;
+        let mut offset = Vector2::new(delta.1 as f32 * 0.8, delta.0 as f32) * 0.15;
         if self.is_zoomed {
             offset *= 0.25;
         }

@@ -13,6 +13,7 @@ use tokio::net::TcpStream;
 
 use std::{
     io::{Cursor, Read},
+    sync::Arc,
     time::Instant,
 };
 
@@ -26,8 +27,9 @@ use crate::{
     ecs::{update_interpolation, update_velocity, InterpolatedPosition, Position, Velocity},
     net::{connection::ClientConnection, ConnectionState, ProtocolVersion},
     render::{
-        chunk::{ChunkRenderData, ChunkRenderer},
+        chunk::ChunkRenderer,
         chunk_debug::DebugLineRenderer,
+        chunk_mesher::{chunk_mesher_thread, ChunkMeshingRequest, ChunkSectionContext},
         debug_cube::DebugCubeRenderer,
         texture,
         util::{Camera, CameraController, CameraUniform},
@@ -172,6 +174,10 @@ async fn main() -> anyhow::Result<()> {
         None,
     ))
     .unwrap();
+
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+
     info!(
         "Supported formats: {:?}",
         surface.get_supported_formats(&adapter)
@@ -344,6 +350,9 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let mut world = hecs::World::new();
+
+    let (chunkmesher_send, mut chunkmesher_recv) =
+        chunk_mesher_thread(device.clone(), queue.clone());
 
     let debugcube_pipeline = DebugCubeRenderer::create_pipeline(
         &device,
@@ -715,22 +724,39 @@ async fn main() -> anyhow::Result<()> {
                 // dirty_chunks.dedup();
 
                 for c in &mut dirty_chunks {
-                    if chunks.get(&(c.0, c.2)).is_some() && c.1 < 16 {
-                        let rd = ChunkRenderData::new_from_chunk(
-                            // &chunks,
-                            &device,
-                            (c.0, c.1 as i32, c.2),
-                            &chunks,
-                        );
+                    let data = ChunkSectionContext::new(&chunks, Point3::new(c.0, c.1 as i32, c.2));
 
-                        if let Some(cd) = chunks
-                            .get_mut(&(c.0, c.2))
-                            .and_then(|cc| cc.get_section_mut(c.1))
+                    if let Some(cd) = chunks
+                        .get_mut(&(c.0, c.2))
+                        .and_then(|cc| cc.get_section_mut(c.1))
+                    {
+                        if chunkmesher_send
+                            .try_send(ChunkMeshingRequest {
+                                chunk_pos: Point3::new(c.0, c.1 as i32, c.2),
+                                data,
+                                buffers: None,
+                            })
+                            .is_ok()
                         {
-                            cd.renderdata = Some(rd);
                             cd.dirty = false;
                         }
                     }
+                }
+
+                // Get finished chunks from the chunk mesher thread
+                let mut count = 0;
+                while let Ok(rd) = chunkmesher_recv.try_recv() {
+                    if let Some(cd) = chunks
+                        .get_mut(&(rd.position.x, rd.position.z))
+                        .and_then(|cc| cc.get_section_mut(rd.position.y as u8))
+                    {
+                        count += 1;
+                        cd.renderdata = Some(rd);
+                    }
+                }
+
+                if count != 0 {
+                    println!("Received {} chunks", count);
                 }
 
                 chunks.chunks.retain(|c, _| {
@@ -805,7 +831,10 @@ async fn main() -> anyhow::Result<()> {
                             "Chunks rendered",
                             format!("{}/{}", chunks_rendered, total_chunks),
                         );
-                        ui.text(format!("{} chunks waiting for meshing", dirty_chunk_count));
+                        ui.text(format!(
+                            "{} chunks waiting to be submitted for meshing",
+                            dirty_chunk_count
+                        ));
                         ui.separator();
                         ui.text(format!(
                             "Press F1 to {} cursor",
@@ -891,20 +920,15 @@ async fn main() -> anyhow::Result<()> {
                             if let Some(s) = section {
                                 if let Some(cr) = &s.renderdata {
                                     let _center = Vector3::new(
-                                        (cr.position.0 * 16 + 8) as f32,
-                                        (cr.position.1 * 16) as f32 + 8.,
-                                        (cr.position.2 * 16 + 8) as f32,
+                                        (cr.position.x * 16 + 8) as f32,
+                                        (cr.position.y * 16) as f32 + 8.,
+                                        (cr.position.z * 16 + 8) as f32,
                                     );
 
-                                    if cr.position.1 >= 16 {
-                                        warn!("chunk section {:?} has invalid Y", cr.position);
-                                        continue;
-                                    }
-
                                     let chunkpos_real = Vector3::new(
-                                        cr.position.0 as f32,
-                                        cr.position.1 as f32,
-                                        cr.position.2 as f32,
+                                        cr.position.x as f32,
+                                        cr.position.y as f32,
+                                        cr.position.z as f32,
                                     ) * 16.;
 
                                     if chunkpos_real

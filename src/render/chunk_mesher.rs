@@ -1,6 +1,12 @@
-use cgmath::Vector3;
+use std::sync::Arc;
 
-use crate::world::{ChunkManager};
+use cgmath::Point3;
+use tokio::sync::mpsc;
+use wgpu::util::DeviceExt;
+
+use crate::world::ChunkManager;
+
+use super::chunk::ChunkRenderData;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -30,51 +36,63 @@ fn vertex_ao(side1: bool, side2: bool, corner: bool) -> u8 {
     3 - (side1 as u8 + side2 as u8 + corner as u8)
 }
 
-// TODO: This currently uses the chunk manager for every block, we can check all the blocks inside the chunks without it.
-pub fn mesh_chunk(
-    coords: (i32, i32, i32),
-    cm: &ChunkManager,
-    // c: &ChunkSectionData,
-) -> (Vec<ChunkVertex>, Vec<u16>) {
-    let base = Vector3::<i32>::new(coords.0 * 16, coords.1 as i32 * 16, coords.2 * 16);
+/// Struct representing the section blocks to be meshed and the blocks around it (used for face culling and AO)
+#[derive(Default)]
+pub struct ChunkSectionContext {
+    blocks: [[[u8; 18]; 18]; 18],
+}
+
+impl ChunkSectionContext {
+    pub fn new(cm: &ChunkManager, position: Point3<i32>) -> Self {
+        let base = position * 16 - Point3::new(1, 1, 1);
+
+        let mut r = Self::default();
+
+        // TODO: Can probably be optimized a bit?
+        for y in 0..18 {
+            for x in 0..18 {
+                for z in 0..18 {
+                    r.blocks[y][x][z] =
+                        cm.get_block(base.x + x as i32, base.y + y as i32, base.z + z as i32);
+                }
+            }
+        }
+
+        r
+    }
+
+    /// Returns minecraft:air for out of bounds coordinates
+    pub fn get_block(&self, x: i32, y: i32, z: i32) -> u8 {
+        if x < -1 || x > 17 || y < -1 || y > 17 || z < -1 || z > 17 {
+            return 0;
+        }
+
+        self.blocks[1 + y as usize][1 + x as usize][1 + z as usize]
+    }
+
+    pub fn get_neighbors(&self, x: i32, y: i32, z: i32) -> (bool, bool, bool, bool, bool, bool) {
+        macro_rules! nb {
+            ($x:expr, $y:expr, $z:expr) => {{
+                let (tx, ty, tz) = (x + $x, y + $y, z + $z);
+
+                self.get_block(tx, ty, tz) != 0
+            }};
+        }
+
+        (
+            nb!(0, 1, 0),  // Up
+            nb!(0, -1, 0), // Down
+            nb!(-1, 0, 0), // Left
+            nb!(1, 0, 0),  // Right
+            nb!(0, 0, -1), // Front
+            nb!(0, 0, 1),  // Back
+        )
+    }
+}
+
+pub fn mesh_chunk(c: &ChunkSectionContext) -> (Vec<ChunkVertex>, Vec<u16>) {
     let (mut vertices, mut indices) = (vec![], vec![]);
     let mut ic = 0;
-
-    macro_rules! get_block {
-        ($x:expr, $y:expr, $z:expr) => {
-            // if $x >= 0 && $x < 16 && $y >= 0 && $y < 16 && $z >= 0 && $z < 16 {
-            // if $x >= base.x
-            //     && $x < (base.x + 16)
-            //     && $y >= base.y
-            //     && $y < (base.y + 16)
-            //     && $z >= base.z
-            //     && $z < (base.z + 16)
-            // {
-            //     c.get_block($x, $y, $z)
-            // } else {
-            //     0
-            cm.get_block($x, $y, $z)
-            // }
-        };
-    }
-
-    macro_rules! get_neighbors {
-        ($x:expr, $y:expr, $z:expr) => {
-            // if $x >= 0 && $x < 16 && $y >= 0 && $y < 16 && $z >= 0 && $z < 16 {
-            // if $x >= base.x
-            //     && $x < (base.x + 16)
-            //     && $y >= base.y
-            //     && $y < (base.y + 16)
-            //     && $z >= base.z
-            //     && $z < (base.z + 16)
-            // {
-            c.get_neighbors($x, $y, $z)
-            // } else {
-            //     (false, false, false, false, false, false)
-            //     // cm.get_neighbors($x, $y, $z)
-            // }
-        };
-    }
 
     macro_rules! vert {
         ($side:expr, $block:expr, $x:expr, $y:expr, $z:expr, $ao:expr, $light:expr) => {{
@@ -96,24 +114,12 @@ pub fn mesh_chunk(
         }};
     }
 
-    macro_rules! face {
-        ($v1:expr, $v2:expr, $v3:expr, $v4:expr) => {
-            indices.push($v1); // Bottom left
-            indices.push($v2); // Top left
-            indices.push($v3); // Top right
-
-            indices.push($v3); // Top right
-            indices.push($v4); // Bottom right
-            indices.push($v1); // Bottom left
-        };
-    }
-
     macro_rules! calculate_ao {
         ($side1:expr, $corner:expr, $side2:expr) => {
             vertex_ao(
-                get_block!(base.x + $side1.0, base.y + $side1.1, base.z + $side1.2) != 0,
-                get_block!(base.x + $corner.0, base.y + $corner.1, base.z + $corner.2) != 0,
-                get_block!(base.x + $side2.0, base.y + $side2.1, base.z + $side2.2) != 0,
+                c.get_block($side1.0, $side1.1, $side1.2) != 0,
+                c.get_block($corner.0, $corner.1, $corner.2) != 0,
+                c.get_block($side2.0, $side2.1, $side2.2) != 0,
             )
         };
     }
@@ -143,10 +149,9 @@ pub fn mesh_chunk(
     for x in 0..16 {
         for z in 0..16 {
             for y in 0..16 {
-                let block = cm.get_block(base.x + x, base.y + y, base.z + z);
+                let block = c.get_block(x, y, z);
                 if block != 0 {
-                    let (nup, ndown, nleft, nright, nfront, nback) =
-                        cm.get_neighbors(base.x + x, base.y + y, base.z + z);
+                    let (nup, ndown, nleft, nright, nfront, nback) = c.get_neighbors(x, y, z);
 
                     let light = 0xf;
 
@@ -353,4 +358,59 @@ pub fn mesh_chunk(
     }
 
     (vertices, indices)
+}
+
+pub struct ChunkMeshingRequest {
+    pub chunk_pos: Point3<i32>,
+    pub data: ChunkSectionContext,
+
+    /// If a buffer already exists it can be used instead of creating a brand new one
+    pub buffers: Option<ChunkRenderData>,
+}
+
+pub fn chunk_mesher_thread(
+    // TODO: Swap these for an IAD object
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+) -> (
+    mpsc::Sender<ChunkMeshingRequest>,
+    mpsc::Receiver<ChunkRenderData>,
+) {
+    let (chunk_send, mut chunk_recv) = mpsc::channel::<ChunkMeshingRequest>(128);
+    let (rdata_send, rdata_recv) = mpsc::channel::<ChunkRenderData>(128);
+
+    tokio::spawn(async move {
+        while let Some(cd) = chunk_recv.recv().await {
+            let (vertex_data, index_data) = mesh_chunk(&cd.data);
+
+            let render_data = if let Some(b) = cd.buffers {
+                queue.write_buffer(&b.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+                queue.write_buffer(&b.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+                ChunkRenderData {
+                    index_count: index_data.len(),
+                    ..b
+                }
+            } else {
+                ChunkRenderData {
+                    position: cd.chunk_pos,
+                    vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Chunk vertex buffer"),
+                        contents: bytemuck::cast_slice(&vertex_data),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+                    index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Chunk index buffer"),
+                        contents: bytemuck::cast_slice(&index_data),
+                        usage: wgpu::BufferUsages::INDEX,
+                    }),
+                    index_count: index_data.len(),
+                }
+            };
+
+            rdata_send.send(render_data).await.ok();
+        }
+    });
+
+    (chunk_send, rdata_recv)
 }
