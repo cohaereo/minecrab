@@ -744,19 +744,13 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 // Get finished chunks from the chunk mesher thread
-                let mut count = 0;
                 while let Ok(rd) = chunkmesher_recv.try_recv() {
                     if let Some(cd) = chunks
                         .get_mut(&(rd.position.x, rd.position.z))
                         .and_then(|cc| cc.get_section_mut(rd.position.y as u8))
                     {
-                        count += 1;
                         cd.renderdata = Some(rd);
                     }
-                }
-
-                if count != 0 {
-                    println!("Received {} chunks", count);
                 }
 
                 chunks.chunks.retain(|c, _| {
