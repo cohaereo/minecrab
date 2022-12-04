@@ -30,7 +30,7 @@ impl Camera {
             orientation: Vector2::zero(),
             aspect: 1280.0 / 720.0,
             fovy: 80.0,
-            znear: 0.1,
+            znear: 0.01,
             zfar: 1000.0,
             vp: Matrix4::one(),
             fov_scale: 1.0,
@@ -95,6 +95,7 @@ pub struct CameraController {
     is_right_pressed: bool,
     is_shift_pressed: bool,
     is_zoomed: bool,
+    pub velocity: Vector3<f32>,
 }
 
 impl CameraController {
@@ -107,6 +108,7 @@ impl CameraController {
             is_right_pressed: false,
             is_shift_pressed: false,
             is_zoomed: false,
+            velocity: Vector3::zero(),
         }
     }
 
@@ -164,20 +166,23 @@ impl CameraController {
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, delta: f32) {
-        let velocity = (delta * self.speed) * if self.is_shift_pressed { 2. } else { 1. };
+        let speed = (delta * self.speed) * if self.is_shift_pressed { 2. } else { 1. };
+        self.velocity = Vector3::zero();
         if self.is_forward_pressed {
-            camera.position += camera.front * velocity;
+            self.velocity += camera.front * speed;
         }
         if self.is_backward_pressed {
-            camera.position -= camera.front * velocity;
+            self.velocity -= camera.front * speed;
         }
 
         if self.is_right_pressed {
-            camera.position += camera.right * velocity;
+            self.velocity += camera.right * speed;
         }
         if self.is_left_pressed {
-            camera.position -= camera.right * velocity;
+            self.velocity -= camera.right * speed;
         }
+
+        // camera.position += self.velocity;
 
         camera.fov_scale = if self.is_zoomed { 0.25 } else { 1.0 };
 

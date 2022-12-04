@@ -47,6 +47,7 @@ mod audio;
 mod ecs;
 mod fixed_point;
 mod net;
+mod physics;
 mod render;
 mod varint;
 mod world;
@@ -787,6 +788,25 @@ async fn main() -> anyhow::Result<()> {
 
                 last_frame = Instant::now();
                 camera_controller.update_camera(&mut camera, frame_delta);
+                let mut next_pos = physics::calculate_next_player_pos(
+                    &chunks,
+                    camera.position - Vector3::new(0.3, 1.62, 0.3),
+                    Vector3::new(camera_controller.velocity.x, 0., 0.),
+                );
+
+                next_pos = physics::calculate_next_player_pos(
+                    &chunks,
+                    next_pos,
+                    Vector3::new(0., 0., camera_controller.velocity.z),
+                );
+
+                next_pos = physics::calculate_next_player_pos(
+                    &chunks,
+                    next_pos,
+                    Vector3::new(0., camera_controller.velocity.y, 0.),
+                );
+
+                camera.position = next_pos + Vector3::new(0.3, 1.62, 0.3);
                 camera_uniform.update_view_proj(&mut camera);
                 queue.write_buffer(&camera_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
 
