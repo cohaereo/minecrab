@@ -151,6 +151,12 @@ impl ChunkManager {
         ground_up_continuous: bool,
         data: &[u8],
     ) -> anyhow::Result<u64> {
+        // Loading a zero'd out chunk, unload it instead (if it exists)
+        if ground_up_continuous && bitmask == 0 {
+            self.chunks.remove(&coords);
+            return Ok(0);
+        }
+
         let chunk = if let Some(c) = self.chunks.get_mut(&coords) {
             c
         } else {
