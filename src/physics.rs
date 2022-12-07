@@ -27,7 +27,9 @@ pub fn calculate_next_player_pos(
         for z in min.z..max.z {
             for x in min.x..max.x {
                 let block = world.get_block(x, y, z);
-                if block != 0 {
+
+                // Skip air and portal blocks
+                if block != 0 && block != 90 {
                     let bb = Aabb3::new(Point3::new(0., 0., 0.), Point3::new(1., 1., 1.));
                     let bb = bb.add_v(Vector3::new(x as f32, y as f32, z as f32));
                     if collides(&bb, &bounds) {
