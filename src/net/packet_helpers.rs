@@ -181,6 +181,7 @@ macro_rules! packet_ids {
 }
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use uuid::Uuid;
 macro_rules! serializable_primitive_impl {
     ($t:ident, $read:ident, $write:ident, multibyte) => {
         impl Serializable for $t {
@@ -258,6 +259,19 @@ impl<T: Serializable> Serializable for Option<T> {
             s.write_to(w)?;
         }
 
+        Ok(())
+    }
+}
+
+impl Serializable for Uuid {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let mut buf = [0u8; 16];
+        r.read(&mut buf)?;
+        Ok(Uuid::from_bytes(buf))
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        w.write_all(self.as_bytes())?;
         Ok(())
     }
 }

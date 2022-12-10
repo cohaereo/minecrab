@@ -41,6 +41,7 @@ tokio = { version = "1.21.2", features = ["full"] }
 tracy-client = "0.14.1"
 wgpu = { version = "0.13", features = ["spirv"] }
 winit = "0.26"
+uuid = "1.2.2"
 
 [build-dependencies]
 rustc_version = "0.4.0"
