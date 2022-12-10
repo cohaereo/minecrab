@@ -374,10 +374,10 @@ pub fn chunk_mesher_thread(
     queue: Arc<wgpu::Queue>,
 ) -> (
     mpsc::Sender<ChunkMeshingRequest>,
-    mpsc::Receiver<ChunkRenderData>,
+    mpsc::UnboundedReceiver<ChunkRenderData>,
 ) {
-    let (chunk_send, mut chunk_recv) = mpsc::channel::<ChunkMeshingRequest>(128);
-    let (rdata_send, rdata_recv) = mpsc::channel::<ChunkRenderData>(128);
+    let (chunk_send, mut chunk_recv) = mpsc::channel::<ChunkMeshingRequest>(512);
+    let (rdata_send, rdata_recv) = mpsc::unbounded_channel::<ChunkRenderData>();
 
     tokio::spawn(async move {
         while let Some(cd) = chunk_recv.recv().await {
@@ -408,7 +408,7 @@ pub fn chunk_mesher_thread(
                 }
             };
 
-            rdata_send.send(render_data).await.ok();
+            rdata_send.send(render_data).ok();
         }
     });
 
