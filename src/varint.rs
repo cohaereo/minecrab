@@ -111,6 +111,12 @@ pub async fn write_varstring(writer: &mut OwnedWriteHalf, value: &str) -> anyhow
 #[derive(Default, Clone, PartialEq)]
 pub struct VarInt(pub i32);
 
+impl PartialEq<i32> for VarInt {
+    fn eq(&self, other: &i32) -> bool {
+        self.0 == *other
+    }
+}
+
 impl Into<i32> for VarInt {
     fn into(self) -> i32 {
         self.0
