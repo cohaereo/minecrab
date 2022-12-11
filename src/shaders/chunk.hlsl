@@ -61,8 +61,8 @@ VertexOutput vs_main(uint vertex_index : SV_VertexID, uint data) : SV_Position {
 
   // output.color *= 0.5; // Nether/end ambient light?
 
-  float ao_mul = max(0.0, min(1.0 - float(3u - ao) * 0.25, 1));
-  output.color *= ao_mul;
+  float ao_mul = 0.9 - ((float)(3u - ao) * 0.2);
+  output.color *= smoothstep(0.0f, 1.0f, ao_mul);
 
   float2 uv_offset =
       float2(colormap_offset % 16, floor(colormap_offset / 16)) / 16;
@@ -76,9 +76,10 @@ float linearFog(float z, float start, float end) {
 }
 
 float4 fs_main(VertexOutput input) : SV_Target0 {
-  float4 c = float4(input.color * atlas_texture.Sample(atlas_sampler, input.uv).rgb, 1);
+  float4 c = float4(
+      input.color * atlas_texture.Sample(atlas_sampler, input.uv).rgb, 1);
 
-  float distance = 16*max((pc.render_distance), 2);
+  float distance = 16 * max((pc.render_distance), 2);
 
   // Nether
   // float4 fogc = float4(0.20, 0.031, 0.031, 1);

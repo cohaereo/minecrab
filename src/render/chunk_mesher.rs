@@ -136,13 +136,33 @@ pub fn mesh_chunk(c: &ChunkSectionContext) -> (Vec<ChunkVertex>, Vec<u16>) {
             let i2 = vert!($side, $block, $v3.0, $v3.1, $v3.2, ao2, $light); // 2, back bottom left
             let i3 = vert!($side, $block, $v4.0, $v4.1, $v4.2, ao3, $light); // 3, back bottom right
 
-            indices.push(i0); // Bottom left
-            indices.push(i1); // Top left
-            indices.push(i2); // Top right
 
-            indices.push(i2); // Top right
-            indices.push(i3); // Bottom right
-            indices.push(i0); // Bottom left
+
+            if ao0 + ao2 > ao1 + ao3 {
+                // 1-----2
+                // | \   |
+                // |   \ |
+                // 0-----3
+                indices.push(i0); // Bottom left
+                indices.push(i1); // Top left
+                indices.push(i3); // Bottom right
+
+                indices.push(i1); // Top left
+                indices.push(i2); // Top right
+                indices.push(i3); // Bottom right
+            } else {
+                // 1-----2
+                // |   / |
+                // | /   |
+                // 0-----3
+                indices.push(i0); // Bottom left
+                indices.push(i1); // Top left
+                indices.push(i2); // Top right
+
+                indices.push(i2); // Top right
+                indices.push(i3); // Bottom right
+                indices.push(i0); // Bottom left
+            }
         };
     }
 
