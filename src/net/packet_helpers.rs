@@ -5,8 +5,17 @@ pub trait Serializable: Sized {
     fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
         unimplemented!()
     }
+
     fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
         unimplemented!()
+    }
+
+    fn read_from_versioned<R: std::io::Read>(r: &mut R, version: i32) -> anyhow::Result<Self> {
+        Self::read_from(r)
+    }
+
+    fn write_to_versioned<W: std::io::Write>(&self, w: &mut W, version: i32) -> anyhow::Result<()> {
+        self.write_to(w)
     }
 }
 
@@ -36,7 +45,7 @@ macro_rules! packet_structs {
                         #![allow(unused_imports)]
                         use crate::net::packet_helpers::*;
                         use crate::net::types::*;
-                        use crate::varint::VarInt;
+                        use crate::varint::{VarInt, VarLong};
 
                         $(
 
@@ -49,41 +58,41 @@ macro_rules! packet_structs {
 
                             #[allow(unused_mut)]
                             impl Serializable for $name {
-                                fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+                                fn read_from_versioned<R: std::io::Read>(r: &mut R, version: i32) -> anyhow::Result<Self> {
                                     let _ = r;
                                     let mut p = $name::default();
 
                                     $(
                                         $(
                                             for _ in 0..p.$count_var {
-                                                p.$field.push(Serializable::read_from(r)?);
+                                                p.$field.push(Serializable::read_from_versioned(r, version)?);
                                             }
 
                                             // ! This is some dark magic used to disable the block below this one when we're reading a vec
                                             #[cfg(not)]
                                         )?
                                         if true $(&& ($cond(&p)))? {
-                                            p.$field = Serializable::read_from(r)?;
+                                            p.$field = Serializable::read_from_versioned(r, version)?;
                                         }
                                     )*
 
                                     Ok(p)
                                 }
 
-                                fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+                                fn write_to_versioned<W: std::io::Write>(&self, w: &mut W, version: i32) -> anyhow::Result<()> {
                                     let _ = w;
                                     let mut _self = self.clone();
                                     $(
                                         $(
                                             _self.$count_var = _self.$field.len() as _;
                                             for v in &_self.$field {
-                                                v.write_to(w)?;
+                                                v.write_to_versioned(w, version)?;
                                             }
 
                                             #[cfg(not)]
                                         )?
                                         if true $(&& ($cond(&_self)))? {
-                                            _self.$field.write_to(w)?;
+                                            _self.$field.write_to_versioned(w, version)?;
                                         }
                                     )*
 
@@ -272,6 +281,23 @@ impl Serializable for Uuid {
 
     fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
         w.write_all(self.as_bytes())?;
+        Ok(())
+    }
+}
+
+impl<T: Serializable> Serializable for Vec<T> {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let mut v = Vec::new();
+        while let Ok(e) = T::read_from(r) {
+            v.push(e);
+        }
+        Ok(v)
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        for v in self {
+            v.write_to(w)?;
+        }
         Ok(())
     }
 }

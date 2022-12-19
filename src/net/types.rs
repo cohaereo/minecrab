@@ -5,7 +5,7 @@ use minecrab_derive::Serializable;
 
 use crate::varint::VarInt;
 
-use super::packet_helpers::Serializable;
+use super::{packet_helpers::Serializable, versions};
 
 #[derive(Debug, Default, Clone, PartialEq, Serializable)]
 pub struct PositionIBI {
@@ -31,39 +31,48 @@ pub struct PositionIII {
 /// General position type. Also used for 26-26-12 encoding
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Position {
-    x: i32,
-    y: i32, // Using 32-bit Y so that we can safely convert from PositionIII
-    z: i32,
+    pub x: i32,
+    pub y: i32, // Using 32-bit Y so that we can safely convert from PositionIII
+    pub z: i32,
 }
 
 impl Serializable for Position {
-    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
-        let v = u64::read_from(r)?;
-        let mut p = Position {
-            x: ((v >> 38) & 0x3FFFFFF) as i32,
-            y: (v & 0xFFF) as i32,
-            z: ((v >> 12) & 0x3FFFFFF) as i32,
-        };
+    fn read_from_versioned<R: std::io::Read>(r: &mut R, version: i32) -> anyhow::Result<Self> {
+        let v = i64::read_from(r)?;
 
-        if p.x >= 1 << 25 {
-            p.x -= 1 << 26
-        }
-        if p.y >= 1 << 11 {
-            p.y -= 1 << 12
-        }
-        if p.z >= 1 << 25 {
-            p.z -= 1 << 26
-        }
+        if version < versions::PROTO_18W43A {
+            let p = Position {
+                x: (v >> 38) as i32,
+                y: ((v >> 26) & 0xFFF) as i32,
+                z: ((v << 38) >> 38) as i32,
+            };
 
-        Ok(p)
+            Ok(p)
+        } else {
+            let p = Position {
+                x: (v >> 38) as i32,
+                y: ((v << 52) >> 52) as i32,
+                z: ((v << 26) >> 38) as i32,
+            };
+
+            Ok(p)
+        }
     }
 
-    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
-        let v = (((self.x as u64) & 0x3FFFFFF) << 38)
-            | ((self.y as u64) & 0xFFF)
-            | (((self.z as u64) & 0x3FFFFFF) << 12);
+    fn write_to_versioned<W: std::io::Write>(&self, w: &mut W, version: i32) -> anyhow::Result<()> {
+        if version < versions::PROTO_18W43A {
+            let v = ((self.x as i64 & 0x3FFFFFF) << 38)
+                | ((self.y as i64 & 0xFFF) << 26)
+                | (self.z as i64 & 0x3FFFFFF);
 
-        u64::write_to(&v, w)
+            i64::write_to(&v, w)
+        } else {
+            let v = (((self.x as i64) & 0x3FFFFFF) << 38)
+                | (((self.z as i64) & 0x3FFFFFF) << 12)
+                | ((self.y as i64) & 0xFFF);
+
+            i64::write_to(&v, w)
+        }
     }
 }
 
@@ -150,8 +159,15 @@ pub struct ChunkMetadata {
     pub add_bitmap: u16,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
+pub struct ChunkMetadata_47 {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+    pub bitmap: u16,
+}
+
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct BlockChangeRecord {
+pub struct BlockChangeRecord_5 {
     pub block_meta: u8,
     pub block_id: u16,
     pub y: u8,
@@ -159,7 +175,7 @@ pub struct BlockChangeRecord {
     pub x: u8,
 }
 
-impl Serializable for BlockChangeRecord {
+impl Serializable for BlockChangeRecord_5 {
     fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
         let v = u32::read_from(r)?;
         Ok(Self {
@@ -173,7 +189,14 @@ impl Serializable for BlockChangeRecord {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serializable)]
-pub struct EntitySpawnProperty {
+pub struct BlockChangeRecord_47 {
+    pub pos_horizontal: u8,
+    pub y: u8,
+    pub block_id: VarInt,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serializable)]
+pub struct EntitySpawnProperty_5 {
     pub name: String,
     pub value: String,
     pub signature: String,
@@ -325,7 +348,7 @@ impl Serializable for EntityMeta {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serializable)]
-pub struct ExplosionRecord {
+pub struct ExplosionRecord_5 {
     pub x: i8,
     pub y: i8,
     pub z: i8,
@@ -410,6 +433,27 @@ impl Serializable for FixedPoint8 {
 }
 
 impl Debug for FixedPoint8 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct FixedPoint16(pub f64);
+
+impl Serializable for FixedPoint16 {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        let v = i8::read_from(r)?;
+
+        Ok(Self(v as f64 / 32.0))
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        ((self.0 * 32.0) as i16).write_to(w)
+    }
+}
+
+impl Debug for FixedPoint16 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
