@@ -21,6 +21,19 @@ pub trait ReadProtoExt: Read {
         Ok(result)
     }
 
+    fn read_varlong(&mut self) -> anyhow::Result<i64> {
+        let mut result = 0i64;
+        for i in 0..9 {
+            let byte = self.read_u8()?;
+            result |= ((byte & 0b0111_1111) as i64) << (7 * i);
+            if byte & 0b1000_0000 == 0 {
+                break;
+            }
+        }
+
+        Ok(result)
+    }
+
     fn read_varstring(&mut self) -> anyhow::Result<String> {
         let length = self.read_varint()?;
         let mut buf = vec![0u8; length as usize];
@@ -35,6 +48,23 @@ impl<R: io::Read + ?Sized> ReadProtoExt for R {}
 pub trait WriteProtoExt: Write {
     fn write_varint(&mut self, value: i32) -> anyhow::Result<()> {
         let mut val = value as u32;
+        loop {
+            let mut temp = (val & 0b1111_1111) as u8;
+            val >>= 7;
+            if val != 0 {
+                temp |= 0b1000_0000;
+            }
+
+            self.write_u8(temp)?;
+
+            if val == 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    fn write_varlong(&mut self, value: i64) -> anyhow::Result<()> {
+        let mut val = value as u64;
         loop {
             let mut temp = (val & 0b1111_1111) as u8;
             val >>= 7;
@@ -123,6 +153,12 @@ impl Into<i32> for VarInt {
     }
 }
 
+impl From<i32> for VarInt {
+    fn from(value: i32) -> Self {
+        Self(value)
+    }
+}
+
 impl Serializable for VarInt {
     fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
         Ok(VarInt(r.read_varint()?))
@@ -141,6 +177,44 @@ impl Debug for VarInt {
 }
 
 impl Into<isize> for VarInt {
+    fn into(self) -> isize {
+        self.0 as isize
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct VarLong(pub i64);
+
+impl Into<i64> for VarLong {
+    fn into(self) -> i64 {
+        self.0
+    }
+}
+
+impl From<i64> for VarLong {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl Serializable for VarLong {
+    fn read_from<R: std::io::Read>(r: &mut R) -> anyhow::Result<Self> {
+        Ok(VarLong(r.read_varlong()?))
+    }
+
+    fn write_to<W: std::io::Write>(&self, w: &mut W) -> anyhow::Result<()> {
+        w.write_varlong(self.0)?;
+        Ok(())
+    }
+}
+
+impl Debug for VarLong {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+impl Into<isize> for VarLong {
     fn into(self) -> isize {
         self.0 as isize
     }
