@@ -138,7 +138,7 @@ pub async fn write_varstring(writer: &mut OwnedWriteHalf, value: &str) -> anyhow
     Ok(())
 }
 
-#[derive(Default, Clone, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq)]
 pub struct VarInt(pub i32);
 
 impl PartialEq<i32> for VarInt {

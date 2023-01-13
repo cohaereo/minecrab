@@ -12,27 +12,38 @@ MineCrab is a Minecraft client written in Rust+WGPU, capable of connecting to of
 
 MineCrab currently only supports 1.7.10, but I'm aiming to support every major version from 1.7 to the latest version (which is 1.19.2 as of writing this).
 
+We use an abstraction system that makes it easy to implement new protocol versions (or even adapt to other protocols, such as the bedrock protocol)
+
 Every version has 3 degrees of support:
 
-- Min: basic support for most major features and packets (movement, chunk loading, chat)
-- Med: supporting all the protocol packets, but not (fully) integrated into the game _yet_
-- Full: support for every packet, fully integrated, players can expect the best support for this version
+- Parse: all packets are able to be decoded/encoded
+- Basic: enough of the abstraction layer is implemented for movement, chunk loading and (basic) entities
+- Mapped: all abstraction layer packets are covered by the implemented packets
+- Full: every packet for this version is covered by the abstraction layer
 
-| Version | Min | Med | Full |
-| ------- | --- | --- | ---- |
-| 1.7     | ✅  | ✅  | ❌   |
-| 1.9     | ❌  | ❌  | ❌   |
-| 1.13    | ❌  | ❌  | ❌   |
-| 1.16    | ❌  | ❌  | ❌   |
-| 1.19    | ❌  | ❌  | ❌   |
+| Version | Parse | Basic | Mapped | Full |
+| ------- | ----- | ----- | ------ | ---- |
+| 1.7     | ✅    | ✅    | 🚧     | ❌   |
+| 1.8     | 🚧    | ✅    | 🚧     | ❌   |
+| 1.9     | 🚧    | ❌    | ❌     | ❌   |
+| 1.10    | 🚧    | ❌    | ❌     | ❌   |
+| 1.11    | 🚧    | ❌    | ❌     | ❌   |
+| 1.12    | 🚧    | ❌    | ❌     | ❌   |
+| 1.13    | ❌    | ❌    | ❌     | ❌   |
+| 1.15    | ❌    | ❌    | ❌     | ❌   |
+| 1.16    | ❌    | ❌    | ❌     | ❌   |
+| 1.16    | ❌    | ❌    | ❌     | ❌   |
+| 1.17    | ❌    | ❌    | ❌     | ❌   |
+| 1.18    | ❌    | ❌    | ❌     | ❌   |
+| 1.19    | ❌    | ❌    | ❌     | ❌   |
 
 ## Features
 
-- [ ] Networking
+- [x] Networking
+  - [x] Multi-protocol abstraction system
   - [ ] Compression
   - [ ] Encryption (online-mode)
-  - [ ] Multi-protocol abstraction system
-- [ ] Rendering
+- [x] Rendering
   - [x] Basic rendering
   - [ ] Occlusion culling
   - [x] Frustum culling
@@ -44,6 +55,7 @@ Every version has 3 degrees of support:
   - [ ] Texture animations
   - [ ] GUI
   - [ ] Optifine/Sodium shader support
+  - [ ] Resource pack support
 - [ ] GUI
   - [ ] Survival inventory
   - [ ] Creative inventory
@@ -53,7 +65,9 @@ Every version has 3 degrees of support:
   - [ ] Anvil
   - [ ] Sign editor
   - [ ] Chat
-- [ ] Sound
+- [x] Sound
+  - [x] Serverside sound
+  - [ ] Clientside sound
 - [ ] Plugin system
   - [ ] Basics
   - [ ] Example plugins

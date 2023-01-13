@@ -1,7 +1,7 @@
 use std::io::{Cursor, Read};
 
+use byteorder::{LittleEndian, ReadBytesExt};
 use fnv::FnvHashMap;
-use nibble_vec::NibbleVec;
 
 use crate::render::chunk::ChunkRenderData;
 
@@ -54,8 +54,8 @@ pub struct ChunkSectionData {
     pub renderdata: Option<ChunkRenderData>,
     pub blocks: [u8; CHUNK_SECTION_SIZE],
     // pub metadata: NibbleVec<[u8; CHUNK_SIZE]>,
-    pub light: NibbleVec<[u8; CHUNK_SIZE / 2]>,
-    // pub skylight: NibbleVec<[u8; CHUNK_SIZE]>,
+    pub light: [u8; CHUNK_SECTION_SIZE / 2],
+    pub skylight: [u8; CHUNK_SECTION_SIZE / 2],
     // pub add: NibbleVec<[u8; CHUNK_SIZE]>,
 }
 
@@ -66,8 +66,8 @@ impl ChunkSectionData {
             renderdata: None,
             blocks: [0; CHUNK_SECTION_SIZE],
             // metadata:(),
-            light: NibbleVec::new(),
-            // skylight: (),
+            light: [0; CHUNK_SECTION_SIZE / 2],
+            skylight: [0; CHUNK_SECTION_SIZE / 2],
             // add: (),
         }
     }
@@ -92,14 +92,18 @@ impl ChunkSectionData {
         self.dirty = true;
     }
 
-    pub fn get_block_light(&self, x: i32, y: i32, z: i32) -> u8 {
+    pub fn get_block_light(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
         if y < 0 {
-            return 0;
+            return (0, 0);
         }
 
-        return self
-            .light
-            .get((((y & 0x0f) << 8) | ((z & 0x0f) << 4) | (x & 0x0f)) as usize);
+        let index = (((y & 0x0f) << 8) | ((z & 0x0f) << 4) | (x & 0x0f)) as usize;
+        let (light, slight) = (self.light[index / 2], self.skylight[index / 2]);
+
+        match index % 2 {
+            0 => (light & 0x0f, slight & 0x0f),
+            _ => ((light >> 4) & 0x0f, (slight >> 4) & 0x0f),
+        }
     }
 
     /// Returns (up, down, left, right, front, back)
@@ -142,7 +146,7 @@ impl ChunkManager {
     }
 
     // @return the amount of bytes read from the data buffer
-    pub fn load_chunk(
+    pub fn load_chunk_5(
         &mut self,
         coords: (i32, i32),
         bitmask: u16,
@@ -192,12 +196,11 @@ impl ChunkManager {
                 continue;
             }
             // TODO: Nibble array type
-            let mut block_light = vec![0u8; CHUNK_SECTION_SIZE / 2];
-            cur.read_exact(&mut block_light)?;
 
             let s = chunk.get_section_mut_or_insert(i as u8);
             s.dirty = true;
-            s.light = NibbleVec::from(block_light);
+            // s.light = NibbleVec::from(block_light);
+            cur.read_exact(&mut s.light)?;
         }
 
         if skylight {
@@ -206,8 +209,11 @@ impl ChunkManager {
                     continue;
                 }
                 // TODO: Nibble array type
-                let mut sky_light = vec![0u8; CHUNK_SECTION_SIZE / 2];
-                cur.read_exact(&mut sky_light)?;
+                let s = chunk.get_section_mut_or_insert(i as u8);
+                s.dirty = true;
+                // let mut sky_light = vec![0u8; CHUNK_SECTION_SIZE / 2];
+                // cur.read_exact(&mut sky_light)?;
+                cur.read_exact(&mut s.skylight)?;
             }
         }
 
@@ -218,6 +224,89 @@ impl ChunkManager {
             // TODO: Nibble array type
             let mut block_add = vec![0u8; CHUNK_SECTION_SIZE / 2];
             cur.read_exact(&mut block_add)?;
+        }
+
+        if ground_up_continuous {
+            let mut biomes = vec![0u8; CHUNK_SIZE_2D];
+            cur.read_exact(&mut biomes)?;
+            chunk.biomes[..].copy_from_slice(&biomes);
+        }
+
+        Ok(cur.position())
+    }
+
+    // @return the amount of bytes read from the data buffer
+    pub fn load_chunk_47(
+        &mut self,
+        coords: (i32, i32),
+        bitmask: u16,
+        skylight: bool,
+        ground_up_continuous: bool,
+        data: &[u8],
+    ) -> anyhow::Result<u64> {
+        // Loading a zero'd out chunk, unload it instead (if it exists)
+        if ground_up_continuous && bitmask == 0 {
+            self.chunks.remove(&coords);
+            return Ok(0);
+        }
+
+        let chunk = if let Some(c) = self.chunks.get_mut(&coords) {
+            c
+        } else {
+            self.chunks.insert(coords, ChunkColumn::empty());
+            self.chunks.get_mut(&coords).unwrap()
+        };
+
+        let mut cur = Cursor::new(data);
+        for i in 0..16 {
+            if bitmask & (1 << i) == 0 {
+                continue;
+            }
+
+            let mut block_types = vec![0u16; CHUNK_SECTION_SIZE];
+            // cur.read_exact(&mut block_types)?;
+            for i2 in 0..CHUNK_SECTION_SIZE {
+                block_types[i2] = cur.read_u16::<LittleEndian>()?;
+            }
+
+            // FIXME: Truncates 12 bits type to 8
+            let mut block_types_short = vec![0u8; CHUNK_SECTION_SIZE];
+            for i2 in 0..CHUNK_SECTION_SIZE {
+                block_types_short[i2] = (block_types[i2] >> 4) as u8;
+            }
+            let s = chunk.get_section_mut_or_insert(i as u8);
+            s.dirty = true;
+            s.blocks[..].copy_from_slice(&block_types_short);
+            // TODO: metadata
+        }
+
+        for i in 0..16 {
+            if bitmask & (1 << i) == 0 {
+                continue;
+            }
+            // TODO: Nibble array type
+            // let mut block_light = vec![0u8; CHUNK_SECTION_SIZE / 2];
+
+            let s = chunk.get_section_mut_or_insert(i as u8);
+            s.dirty = true;
+            // s.light = NibbleVec::from(block_light);
+            cur.read_exact(&mut s.light)?;
+        }
+
+        if skylight {
+            for i in 0..16 {
+                if bitmask & (1 << i) == 0 {
+                    continue;
+                }
+                // TODO: Nibble array type
+                // let mut sky_light = vec![0u8; CHUNK_SECTION_SIZE / 2];
+                // cur.read_exact(&mut sky_light)?;
+
+                let s = chunk.get_section_mut_or_insert(i as u8);
+                s.dirty = true;
+                // s.skylight = NibbleVec::from(sky_light);
+                cur.read_exact(&mut s.skylight)?;
+            }
         }
 
         if ground_up_continuous {
@@ -247,6 +336,19 @@ impl ChunkManager {
             }
         } else {
             0
+        }
+    }
+
+    pub fn get_block_light(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        let ccoord = chunk_coord!(x, y, z);
+        if let Some(chunk) = self.get(&(ccoord.0, ccoord.2)) {
+            if let Some(Some(section)) = chunk.sections.get(ccoord.1 as usize) {
+                section.get_block_light(x, y, z)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
         }
     }
 
@@ -289,19 +391,6 @@ impl ChunkManager {
         if rz == 15 {
             self.get_mut(&(ccoord.0, ccoord.2 + 1))
                 .map(|c| c.get_section_mut(ccoord.1 as u8).map(|c| c.dirty = true));
-        }
-    }
-
-    pub fn get_block_light(&self, coords: (i32, i32, i32)) -> u8 {
-        let ccoord = chunk_coord!(coords.0, coords.1, coords.2);
-        if let Some(chunk) = self.get(&(ccoord.0, ccoord.2)) {
-            if let Some(Some(section)) = chunk.sections.get(ccoord.1 as usize) {
-                section.get_block_light(coords.0, coords.1, coords.2)
-            } else {
-                0
-            }
-        } else {
-            0
         }
     }
 

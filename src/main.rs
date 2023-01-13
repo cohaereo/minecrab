@@ -25,7 +25,9 @@ use world::ChunkManager;
 use crate::{
     audio::AudioManager,
     ecs::{update_interpolation, update_velocity, InterpolatedPosition, Position, Velocity},
-    net::{connection::ClientConnection, ConnectionState, ProtocolVersion},
+    net::{
+        connection::ClientConnection, wrapper::AbstractPacket, ConnectionState, ProtocolVersion,
+    },
     render::{
         chunk::ChunkRenderer,
         chunk_debug::DebugLineRenderer,
@@ -36,6 +38,7 @@ use crate::{
     },
 };
 
+use crate::net::wrapper::ChunkData;
 use winit::{
     dpi::PhysicalSize,
     event::*,
@@ -81,22 +84,19 @@ async fn main() -> anyhow::Result<()> {
     let mut chunks = ChunkManager::new();
 
     let stream = TcpStream::connect(format!("{}:{}", args.address, args.port)).await?;
-    let mut connection = ClientConnection::from_stream(stream, ProtocolVersion::Proto1_7_6);
+    let mut connection = ClientConnection::from_stream(stream, ProtocolVersion::Proto1_8);
 
-    connection.write(&net::packets::Packet::SetProtocol(
-        net::packets::handshaking::serverbound::SetProtocol {
-            protocol_version: varint::VarInt(5),
-            server_host: args.address,
-            server_port: args.port,
-            next_state: varint::VarInt(2),
-        },
-    ))?;
+    connection.write(AbstractPacket::SetProtocol {
+        // protocol_version: varint::VarInt(5),
+        protocol_version: varint::VarInt(47),
+        server_host: args.address,
+        server_port: args.port,
+        next_state: ConnectionState::Login,
+    })?;
 
-    connection.write(&net::packets::Packet::LoginStart(
-        net::packets::login::serverbound::LoginStart {
-            username: args.username,
-        },
-    ))?;
+    connection.write(AbstractPacket::LoginStart {
+        username: args.username,
+    })?;
 
     // Wait for login success
     while connection.state != ConnectionState::Play {
@@ -107,27 +107,23 @@ async fn main() -> anyhow::Result<()> {
     camera.aspect = 1600 as f32 / 900 as f32;
 
     // Wait for player pos
-
     'w: loop {
         match connection.read() {
-            Some(net::packets::Packet::PositionClientbound(p)) => {
-                camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
-                camera.orientation = Vector2::new(p.pitch, p.yaw);
-                connection.write(&net::packets::Packet::PositionLook(
-                    net::packets::play::serverbound::PositionLook {
-                        x: p.x,
-                        stance: p.y - 1.62,
-                        y: p.y,
-                        z: p.z,
-                        yaw: p.yaw,
-                        pitch: p.pitch,
-                        on_ground: p.on_ground,
-                    },
-                ))?;
+            Some(AbstractPacket::PositionLookClientBound {
+                pos, pitch, yaw, ..
+            }) => {
+                camera.position = Point3::new(pos.x as f32, pos.y as f32 + 1.62, pos.z as f32);
+                camera.orientation = Vector2::new(pitch, yaw);
 
-                connection.write(&net::packets::Packet::ClientCommand(
-                    net::packets::play::serverbound::ClientCommand { payload: 0 },
-                ))?;
+                connection.write(AbstractPacket::PositionLookServerBound {
+                    pos,
+                    pitch,
+                    yaw,
+                    on_ground: true,
+                })?;
+
+                connection.write(AbstractPacket::ClientCommand { action_id: 0 })?;
+
                 break 'w;
             }
             _ => {}
@@ -479,174 +475,249 @@ async fn main() -> anyhow::Result<()> {
                 loop {
                     if let Some(p) = connection.read() {
                         match p {
-                            net::packets::Packet::MapChunkBulk(p) => {
-                                let mut data_offset = 0;
-                                let mut c = Cursor::new(&p.data);
-                                let mut z = ZlibDecoder::new(&mut c);
+                            AbstractPacket::Chunks(chunks_packet) => match chunks_packet {
+                                ChunkData::Bulk_5(p) => {
+                                    let mut data_offset = 0;
+                                    let mut c = Cursor::new(&p.data);
+                                    let mut z = ZlibDecoder::new(&mut c);
 
-                                let mut data = Vec::new();
-                                if z.read_to_end(&mut data).is_err() {
-                                    warn!("Chunk data failed to decompress");
-                                    continue;
+                                    let mut data = Vec::new();
+                                    if z.read_to_end(&mut data).is_err() {
+                                        warn!("Chunk data failed to decompress");
+                                        continue;
+                                    }
+
+                                    for (_i, cm) in p.meta.iter().enumerate() {
+                                        let bytes_read = chunks
+                                            .load_chunk_5(
+                                                (cm.chunk_x, cm.chunk_z),
+                                                cm.primary_bitmap,
+                                                cm.add_bitmap,
+                                                p.sky_light_sent,
+                                                true,
+                                                &data[data_offset..],
+                                            )
+                                            .unwrap();
+                                        data_offset += bytes_read as usize;
+                                    }
+
+                                    if data_offset < data.len() {
+                                        warn!("Trailing data in chunk batch!");
+                                    }
                                 }
+                                ChunkData::Bulk_47(p) => {
+                                    let mut data_offset = 0;
 
-                                for (_i, cm) in p.meta.iter().enumerate() {
-                                    let bytes_read = chunks
-                                        .load_chunk(
-                                            (cm.chunk_x, cm.chunk_z),
-                                            cm.primary_bitmap,
-                                            cm.add_bitmap,
-                                            p.sky_light_sent,
-                                            true,
-                                            &data[data_offset..],
+                                    for (_i, cm) in p.meta.data.iter().enumerate() {
+                                        let bytes_read = chunks
+                                            .load_chunk_47(
+                                                (cm.chunk_x, cm.chunk_z),
+                                                cm.bitmap,
+                                                p.sky_light_sent,
+                                                true,
+                                                &p.data[data_offset..],
+                                            )
+                                            .unwrap();
+                                        data_offset += bytes_read as usize;
+                                    }
+
+                                    if data_offset < p.data.len() {
+                                        warn!(
+                                            "Trailing data in chunk batch! ({} bytes left)",
+                                            p.data.len() - data_offset
+                                        );
+                                    }
+                                }
+                                ChunkData::Single_5(p) => {
+                                    let mut c = Cursor::new(&p.compressed_chunk_data.data);
+                                    let mut z = ZlibDecoder::new(&mut c);
+
+                                    let mut data = Vec::new();
+                                    if z.read_to_end(&mut data).is_err() {
+                                        warn!("Chunk data failed to decompress");
+                                        continue;
+                                    }
+
+                                    chunks
+                                        .load_chunk_5(
+                                            (p.x, p.z),
+                                            p.bit_map,
+                                            p.add_bit_map,
+                                            false,
+                                            p.ground_up,
+                                            &data,
                                         )
                                         .unwrap();
-                                    data_offset += bytes_read as usize;
                                 }
-
-                                if data_offset < data.len() {
-                                    warn!("Trailing data in chunk batch!");
+                                ChunkData::Single_47(p) => {
+                                    chunks
+                                        .load_chunk_47(
+                                            (p.x, p.z),
+                                            p.bit_map,
+                                            false,
+                                            p.ground_up,
+                                            &p.chunk_data.data,
+                                        )
+                                        .unwrap();
                                 }
-                            }
-                            net::packets::Packet::MapChunk(p) => {
-                                let mut c = Cursor::new(&p.compressed_chunk_data.data);
-                                let mut z = ZlibDecoder::new(&mut c);
-
-                                let mut data = Vec::new();
-                                if z.read_to_end(&mut data).is_err() {
-                                    warn!("Chunk data failed to decompress");
-                                    continue;
-                                }
-
-                                chunks
-                                    .load_chunk(
-                                        (p.x, p.z),
-                                        p.bit_map,
-                                        p.add_bit_map,
-                                        false,
-                                        p.ground_up,
-                                        &data,
+                                _ => {
+                                    error!(
+                                        "Unhandled chunk packet {:?}",
+                                        <&'static str>::from(chunks_packet)
                                     )
-                                    .unwrap();
+                                }
+                            },
+                            AbstractPacket::Explosion {
+                                pos,
+                                affected_block_offsets,
+                                ..
+                            } => {
+                                for r in affected_block_offsets {
+                                    chunks.set_block(
+                                        pos.x as i32 + r.0 as i32,
+                                        pos.y as i32 + r.1 as i32,
+                                        pos.z as i32 + r.2 as i32,
+                                        0,
+                                    )
+                                }
                             }
-                            net::packets::Packet::Respawn { .. } => {
+                            AbstractPacket::Respawn { .. } => {
                                 chunks.chunks.clear();
 
                                 // Shrink to reclaim memory
                                 chunks.chunks.shrink_to_fit();
                             }
-                            net::packets::Packet::BlockChange(p) => {
+                            AbstractPacket::BlockChange { kind, location } => {
+                                println!(
+                                    "Block change {} {} {} {}",
+                                    location.x, location.y, location.z, kind
+                                );
                                 chunks.set_block(
-                                    p.location.x,
-                                    p.location.y as i32,
-                                    p.location.z,
-                                    p.kind.0 as u8,
+                                    location.x,
+                                    location.y,
+                                    location.z,
+                                    (kind >> 4) as u8,
                                 );
                             }
-                            net::packets::Packet::MultiBlockChange(p) => {
-                                for r in p.records {
-                                    chunks.set_block(
-                                        p.chunk_x * 16 + r.x as i32,
-                                        r.y as i32,
-                                        p.chunk_z * 16 + r.z as i32,
-                                        r.block_id as u8,
-                                    );
-                                }
-                            }
-                            net::packets::Packet::EntityMoveLook(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
-                                if let Ok((pos, interp)) = world.query_one_mut::<(
-                                    &mut Position,
-                                    &mut InterpolatedPosition,
-                                )>(
-                                    ent
-                                ) {
-                                    pos.0 += Vector3::new(
-                                        p.d_x.0 as f32,
-                                        p.d_y.0 as f32,
-                                        p.d_z.0 as f32,
-                                    );
-
-                                    interp.delta = ecs::TICK_DELTA
-                                }
-                            }
-                            net::packets::Packet::RelEntityMove(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
-                                if let Ok((pos, interp)) = world.query_one_mut::<(
-                                    &mut Position,
-                                    &mut InterpolatedPosition,
-                                )>(
-                                    ent
-                                ) {
-                                    pos.0 += Vector3::new(
-                                        p.d_x.0 as f32,
-                                        p.d_y.0 as f32,
-                                        p.d_z.0 as f32,
-                                    );
-
-                                    interp.delta = ecs::TICK_DELTA
-                                }
-                            }
-                            net::packets::Packet::EntityVelocity(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
-                                if let Ok((_pos, v)) =
-                                    world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
-                                {
-                                    v.0 = Vector3::new(
-                                        p.velocity_x as f32,
-                                        p.velocity_y as f32,
-                                        p.velocity_z as f32,
-                                    ) * ecs::VELOCITY_UNIT;
-                                }
-                            }
-                            net::packets::Packet::EntityTeleport(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id);
-                                if let Ok((pos, interp)) = world.query_one_mut::<(
-                                    &mut Position,
-                                    &mut InterpolatedPosition,
-                                )>(
-                                    ent
-                                ) {
-                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
-
-                                    interp.delta = ecs::TICK_DELTA / 5.;
-                                }
-                            }
-                            net::packets::Packet::SpawnEntityLiving(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
-                                if let Ok((pos, v)) =
-                                    world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
-                                {
-                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
-                                    v.0 = Vector3::new(
-                                        p.velocity_x as f32,
-                                        p.velocity_y as f32,
-                                        p.velocity_z as f32,
-                                    ) * ecs::VELOCITY_UNIT;
-                                }
-                            }
-                            net::packets::Packet::SpawnEntity(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
-                                if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
-                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
-                                }
-                            }
-                            net::packets::Packet::NamedEntitySpawn(p) => {
-                                let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
-                                if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
-                                    pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
-                                }
-                            }
-                            net::packets::Packet::EntityDestroy(p) => {
-                                for e in p.entity_ids.data {
-                                    let eid = ecs::get_or_insert(&mut world, e);
-                                    world.despawn(eid).ok();
-                                }
-                            }
-                            net::packets::Packet::NamedSoundEffect(p) => {
+                            // net::packets::Packet::MultiBlockChange_47(p) => {
+                            //     for r in p.records.data {
+                            //         let offset_x = (r.pos_horizontal & 0xf0) >> 4;
+                            //         let offset_z = r.pos_horizontal & 0x0f;
+                            //         // println!(
+                            //         //     "Multiblock change record {} {} {} {}",
+                            //         //     p.chunk_x * 16 + offset_x as i32,
+                            //         //     r.y as i32,
+                            //         //     p.chunk_z * 16 + offset_z as i32,
+                            //         //     r.block_id.0,
+                            //         // );
+                            //         chunks.set_block(
+                            //             p.chunk_x * 16 + offset_x as i32,
+                            //             r.y as i32,
+                            //             p.chunk_z * 16 + offset_z as i32,
+                            //             (r.block_id.0 >> 4) as u8,
+                            //         );
+                            //     }
+                            // }
+                            // net::packets::Packet::EntityMoveLook_47(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok((pos, interp)) = world.query_one_mut::<(
+                            //         &mut Position,
+                            //         &mut InterpolatedPosition,
+                            //     )>(
+                            //         ent
+                            //     ) {
+                            //         pos.0 += Vector3::new(
+                            //             p.d_x.0 as f32,
+                            //             p.d_y.0 as f32,
+                            //             p.d_z.0 as f32,
+                            //         );
+                            //
+                            //         interp.delta = ecs::TICK_DELTA
+                            //     }
+                            // }
+                            // net::packets::Packet::RelEntityMove_47(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok((pos, interp)) = world.query_one_mut::<(
+                            //         &mut Position,
+                            //         &mut InterpolatedPosition,
+                            //     )>(
+                            //         ent
+                            //     ) {
+                            //         pos.0 += Vector3::new(
+                            //             p.d_x.0 as f32,
+                            //             p.d_y.0 as f32,
+                            //             p.d_z.0 as f32,
+                            //         );
+                            //
+                            //         interp.delta = ecs::TICK_DELTA
+                            //     }
+                            // }
+                            // net::packets::Packet::EntityVelocity_47(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok((_pos, v)) =
+                            //         world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
+                            //     {
+                            //         v.0 = Vector3::new(
+                            //             p.velocity_x as f32,
+                            //             p.velocity_y as f32,
+                            //             p.velocity_z as f32,
+                            //         ) * ecs::VELOCITY_UNIT;
+                            //     }
+                            // }
+                            // net::packets::Packet::EntityTeleport_47(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok((pos, interp)) = world.query_one_mut::<(
+                            //         &mut Position,
+                            //         &mut InterpolatedPosition,
+                            //     )>(
+                            //         ent
+                            //     ) {
+                            //         pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                            //
+                            //         interp.delta = ecs::TICK_DELTA / 5.;
+                            //     }
+                            // }
+                            // net::packets::Packet::SpawnEntityLiving_5(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok((pos, v)) =
+                            //         world.query_one_mut::<(&mut Position, &mut Velocity)>(ent)
+                            //     {
+                            //         pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                            //         v.0 = Vector3::new(
+                            //             p.velocity_x as f32,
+                            //             p.velocity_y as f32,
+                            //             p.velocity_z as f32,
+                            //         ) * ecs::VELOCITY_UNIT;
+                            //     }
+                            // }
+                            // net::packets::Packet::SpawnEntity_5(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
+                            //         pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                            //     }
+                            // }
+                            // net::packets::Packet::NamedEntitySpawn_47(p) => {
+                            //     let ent = ecs::get_or_insert(&mut world, p.entity_id.0);
+                            //     if let Ok(pos) = world.query_one_mut::<&mut Position>(ent) {
+                            //         pos.0 = Point3::new(p.x.0 as f32, p.y.0 as f32, p.z.0 as f32);
+                            //     }
+                            // }
+                            // net::packets::Packet::EntityDestroy_47(p) => {
+                            //     for e in p.entity_ids.data {
+                            //         let eid = ecs::get_or_insert(&mut world, e.0);
+                            //         world.despawn(eid).ok();
+                            //     }
+                            // }
+                            AbstractPacket::NamedSoundEffect {
+                                pos,
+                                pitch,
+                                volume,
+                                sound_name,
+                                ..
+                            } => {
                                 let path_glob = format!(
                                     "assets/minecraft/sounds/{}*.ogg",
-                                    p.sound_name.replace('.', "/")
+                                    sound_name.replace('.', "/")
                                 );
                                 if let Ok(paths) = glob::glob(&path_glob) {
                                     let paths: Vec<std::path::PathBuf> =
@@ -661,17 +732,21 @@ async fn main() -> anyhow::Result<()> {
                                         audio_manager
                                             .play(
                                                 &path,
-                                                [p.x as f32 / 8., p.y as f32 / 8., p.z as f32 / 8.]
-                                                    .into(),
-                                                p.volume,
-                                                p.pitch as f32 / 63.,
+                                                Point3::new(
+                                                    pos.x as f32,
+                                                    pos.y as f32,
+                                                    pos.z as f32,
+                                                ),
+                                                volume,
+                                                pitch,
                                             )
                                             .ok();
                                     }
                                 };
                             }
-                            net::packets::Packet::PositionClientbound(p) => {
-                                camera.position = Point3::new(p.x as f32, p.y as f32, p.z as f32);
+                            AbstractPacket::PositionLookClientBound { pos, .. } => {
+                                camera.position =
+                                    Point3::new(pos.x as f32, pos.y as f32 + 1.62, pos.z as f32);
                             }
                             _ => {}
                         }
@@ -766,21 +841,20 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // Send player position every tick
+                // Send player position every tick instead of every frame
                 // FIXME: If you dont have vsync enabled (or a 60hz monitor) this is going to hurt
                 if frame_count % 3 == 0 {
                     connection
-                        .write(&net::packets::Packet::PositionLook(
-                            net::packets::play::serverbound::PositionLook {
-                                x: camera.position.x as f64,
-                                stance: camera.position.y as f64 - 1.62,
-                                y: camera.position.y as f64,
-                                z: camera.position.z as f64,
-                                yaw: camera.orientation.y,
-                                pitch: camera.orientation.x,
-                                on_ground: false,
-                            },
-                        ))
+                        .write(AbstractPacket::PositionLookServerBound {
+                            pos: Point3::new(
+                                camera.position.x as f64,
+                                camera.position.y as f64 - 1.62,
+                                camera.position.z as f64,
+                            ),
+                            yaw: camera.orientation.y,
+                            pitch: camera.orientation.x,
+                            on_ground: false,
+                        })
                         .ok();
                 }
 
@@ -871,14 +945,20 @@ async fn main() -> anyhow::Result<()> {
                         .build();
 
                     if enter_hit || ui.button("Send") {
-                        connection
-                            .write(&net::packets::Packet::ChatServerbound(
-                                net::packets::play::serverbound::ChatServerbound {
-                                    message: chatmsg_buf.clone(),
-                                },
-                            ))
-                            .ok();
+                        if let Err(e) =
+                            connection.write(AbstractPacket::ChatServerbound(chatmsg_buf.clone()))
+                        {
+                            error!("{e}");
+                        }
                         chatmsg_buf.clear();
+                    }
+
+                    if ui.button("TNT (40 ticks)") {
+                        if let Err(e) = connection.write(AbstractPacket::ChatServerbound(
+                            "/summon PrimedTnt ~ ~ ~ {Ticks: 40}".to_owned(),
+                        )) {
+                            error!("{e}");
+                        }
                     }
                 });
 
@@ -903,10 +983,13 @@ async fn main() -> anyhow::Result<()> {
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.541,
-                                    g: 0.675,
+                                    r: 0.527,
+                                    g: 0.686,
                                     b: 1.000,
-                                    a: 1.000,
+                                    // r: 0.0319,
+                                    // g: 0.0003,
+                                    // b: 0.0003,
+                                    a: 1.0,
                                 }),
                                 store: true,
                             },

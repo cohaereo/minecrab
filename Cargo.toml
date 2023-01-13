@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+bitflags = "1"
 bytemuck = { version = "1.12", features = ["derive"] }
 byteorder = "1.4"
 cgmath = { version = "0.17", features = ["swizzle", "mint"] }
@@ -30,6 +31,8 @@ lewton = "0.10"
 log = "0.4"
 minecrab_derive = { path = "./minecrab_derive" }
 nibble_vec = "0.1.0"
+num-traits = "0.2"
+num-derive = "0.3"
 oddio = "0.6"
 pretty_env_logger = "0.4"
 profiling = { version = "1.0.7", features = ["profile-with-tracy"] }
@@ -37,6 +40,8 @@ rand = "0.8"
 raw-cpuid = "10.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+strum = { version = "0.24", features = ["derive"] }
+strum_macros = "0.24"
 tokio = { version = "1.21.2", features = ["full"] }
 tracy-client = "0.14.1"
 wgpu = { version = "0.13", features = ["spirv"] }

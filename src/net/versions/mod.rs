@@ -1,7 +1,56 @@
-pub mod v1_7_10;
+use crate::net::ProtocolVersion;
 
-pub const PROTO_1_7: i32 = 5;
-pub const PROTO_1_7_10: i32 = 5;
+pub mod v1_10;
+pub mod v1_11;
+pub mod v1_12;
+pub mod v1_12_1;
+pub mod v1_12_2;
+pub mod v1_7_6;
+pub mod v1_8;
+pub mod v1_9;
+pub mod v1_9_2;
+pub mod v1_9_4;
+
+pub fn decode_packet(protocol: ProtocolVersion, p: &crate::net::codec::RawPacket, state: crate::net::ConnectionState, dir: crate::net::PacketDirection) -> anyhow::Result<crate::net::packets::Packet> {
+    // TODO: Macro can simplify this a bit
+    let func = match protocol {
+        ProtocolVersion::Proto1_7_6 => v1_7_6::decode_packet,
+        ProtocolVersion::Proto1_8 => v1_8::decode_packet,
+        ProtocolVersion::Proto1_9 => v1_9::decode_packet,
+        ProtocolVersion::Proto1_9_2 => v1_9_2::decode_packet,
+        ProtocolVersion::Proto1_9_4 => v1_9_4::decode_packet,
+        ProtocolVersion::Proto1_10 => v1_10::decode_packet,
+        ProtocolVersion::Proto1_11 => v1_11::decode_packet,
+        ProtocolVersion::Proto1_12 => v1_12::decode_packet,
+        ProtocolVersion::Proto1_12_1 => v1_12_1::decode_packet,
+        ProtocolVersion::Proto1_12_2 => v1_12_2::decode_packet,
+        _ => anyhow::bail!("No ID mapping found for {:?} in decode_packet", protocol),
+    };
+
+    func(p, state, dir)
+}
+
+pub fn encode_packet(protocol: ProtocolVersion, p: &crate::net::packets::Packet, state: crate::net::ConnectionState, dir: crate::net::PacketDirection) -> anyhow::Result<crate::net::codec::RawPacket> {
+    // TODO: Macro can simplify this a bit
+    let func = match protocol {
+        ProtocolVersion::Proto1_7_6 => v1_7_6::encode_packet,
+        ProtocolVersion::Proto1_8 => v1_8::encode_packet,
+        ProtocolVersion::Proto1_9 => v1_9::encode_packet,
+        ProtocolVersion::Proto1_9_2 => v1_9_2::encode_packet,
+        ProtocolVersion::Proto1_9_4 => v1_9_4::encode_packet,
+        ProtocolVersion::Proto1_10 => v1_10::encode_packet,
+        ProtocolVersion::Proto1_11 => v1_11::encode_packet,
+        ProtocolVersion::Proto1_12 => v1_12::encode_packet,
+        ProtocolVersion::Proto1_12_1 => v1_12_1::encode_packet,
+        ProtocolVersion::Proto1_12_2 => v1_12_2::encode_packet,
+        _ => anyhow::bail!("No ID mapping found for {:?} in encode_packet", protocol),
+    };
+
+    func(p, state, dir)
+}
+
+pub const PROTO_1_7: i32 = 4;
+pub const PROTO_1_7_6: i32 = 5;
 pub const PROTO_1_8: i32 = 47;
 pub const PROTO_1_9: i32 = 107;
 pub const PROTO_1_9_2: i32 = 109;
@@ -30,6 +79,7 @@ pub const PROTO_1_18: i32 = 757;
 pub const PROTO_1_18_2: i32 = 758;
 pub const PROTO_1_19: i32 = 759;
 pub const PROTO_1_19_2: i32 = 760;
+pub const PROTO_MAX: i32 = PROTO_1_19_2;
 
-// Snapshot versions used for certain types (eg Position types ordering changed in 18w43a)
+// Snapshot versions used for certain types (eg Position type's bit ordering changed in 18w43a)
 pub const PROTO_18W43A: i32 = 441;

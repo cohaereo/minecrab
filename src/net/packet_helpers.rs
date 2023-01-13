@@ -109,7 +109,8 @@ macro_rules! packet_structs {
 
 #[macro_export]
 macro_rules! packet_ids {
-    ($($state:ident $tstate:ident {
+    (version $version:expr,
+        $($state:ident $tstate:ident {
         $($dir:ident $tdir:ident {
             $(
                 $id:expr => $name:ident,
@@ -129,9 +130,9 @@ macro_rules! packet_ids {
                                 PacketDirection::$tdir => {
                                     match p.id {
                                         $(
-                                            $id => crate::net::packets::Packet::$name(Serializable::read_from(&mut reader)?),
+                                            $id => crate::net::packets::Packet::$name(Serializable::read_from_versioned(&mut reader, $version)?),
                                         )*
-                                        _ => anyhow::bail!("No mapping found for {:?} packet 0x{:x} in state {:?}", $tdir, p.id, $tstate)
+                                        _ => anyhow::bail!("No mapping found for {:?}bound packet 0x{:x} in state {:?}", $tdir, p.id, $tstate)
                                     }
                                 }
                             )*
@@ -172,10 +173,10 @@ macro_rules! packet_ids {
                                         $(
                                             crate::net::packets::Packet::$name(p) => {
                                                 rp.id = $id;
-                                                p.write_to(&mut writer)?;
+                                                p.write_to_versioned(&mut writer, $version)?;
                                             },
                                         )*
-                                        _ => anyhow::bail!("No mapping found for {:?} packet {:?} in state {:?}", $tdir, p, $tstate)
+                                        _ => anyhow::bail!("No mapping found for {:?}bound packet {:?} in state {:?}", $tdir, p, $tstate)
                                     }
                                 }
                             )*

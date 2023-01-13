@@ -1,8 +1,10 @@
+use crate::net::wrapper::AbstractPacket;
+use crate::net::PacketDirection;
+use num_traits::ToPrimitive;
 use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 
 use super::{
     codec::{MinecraftCodec, RawPacket},
-    packets::Packet,
     ConnectionState, ProtocolVersion,
 };
 
@@ -52,48 +54,86 @@ impl ClientConnection {
         }
     }
 
-    fn check_for_state_change(&mut self, p: &Packet) {
+    fn check_for_state_change(&mut self, p: &AbstractPacket) {
         match p {
-            Packet::SetProtocol(p) => {
-                self.state = match p.next_state.0 {
-                    1 => ConnectionState::Status,
-                    2 => ConnectionState::Login,
-                    _ => panic!("Invalid next_state!"),
-                };
+            AbstractPacket::SetProtocol { next_state, .. } => {
+                self.state = *next_state;
                 debug!("State switching to {:?}", self.state);
             }
-            Packet::LoginSuccess(_) => {
+            AbstractPacket::LoginSuccess { .. } => {
                 debug!("State switching to Play");
                 self.state = ConnectionState::Play;
+            }
+
+            AbstractPacket::SetCompression { .. } => {
+                panic!("Compression is not supported!");
+            }
+
+            AbstractPacket::EncryptionBeginClientbound { .. } => {
+                panic!("Encryption is not supported!");
             }
             _ => {}
         }
     }
 
-    pub fn read(&mut self) -> Option<Packet> {
+    // TODO: Error handling
+    pub fn read(&mut self) -> Option<AbstractPacket> {
         let data = self.packet_rx.try_recv().ok()?;
-        match super::versions::v1_7_10::decode_packet(
+        match super::versions::decode_packet(
+            self.protocol,
             &data,
             self.state,
             super::PacketDirection::Client,
         ) {
-            Ok(p) => {
-                self.check_for_state_change(&p);
-                Some(p)
-            }
+            Ok(p) => match AbstractPacket::from_packet(p) {
+                Some(ap) => {
+                    self.check_for_state_change(&ap);
+                    Some(ap)
+                }
+                None => {
+                    if self.state != ConnectionState::Play {
+                        panic!("Non-play packet could not be translated to an AbstractPacket");
+                    } else {
+                        None
+                    }
+                }
+            },
             Err(e) => {
-                error!("Error decoding packet 0x{:x}: {}", data.id, e);
-                None
+                if self.state != ConnectionState::Play {
+                    panic!(
+                        "An error occurred while decoding non-play packet 0x{:x}: {}",
+                        data.id, e
+                    );
+                } else {
+                    error!("Error decoding packet 0x{:x}: {}", data.id, e);
+                    None
+                }
             }
         }
     }
 
-    pub fn write(&mut self, p: &Packet) -> anyhow::Result<()> {
-        let rp =
-            super::versions::v1_7_10::encode_packet(p, self.state, super::PacketDirection::Server)?;
+    pub fn write(&mut self, ap: AbstractPacket) -> anyhow::Result<()> {
+        // FIXME: we're cloning the packet because the state change check happens after decoding, otherwise the encoder will fail because the state changed before encoding
+        match ap.clone().to_packet(self.protocol.to_i32().unwrap()) {
+            Ok(p) => {
+                let rp = super::versions::encode_packet(
+                    self.protocol,
+                    &p,
+                    self.state,
+                    PacketDirection::Server,
+                )?;
+                self.check_for_state_change(&ap);
 
-        self.packet_tx.try_send(rp)?;
-        self.check_for_state_change(p);
+                self.packet_tx.try_send(rp)?;
+            }
+            Err(e) => {
+                if self.state != ConnectionState::Play {
+                    panic!("An error occurred while encoding a non-play packet: {e}")
+                } else {
+                    return Err(e);
+                }
+            }
+        }
 
         Ok(())
     }
