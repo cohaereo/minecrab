@@ -59,7 +59,7 @@ VertexOutput vs_main(uint vertex_index : SV_VertexID, uint data) : SV_Position {
   //   output.color *= 0.5;
   // }
 
-  output.color = smoothstep(0, 1, float3((float)light / 16.0));
+  // output.color = smoothstep(0, 1, float3((float)light / 16.0));
 
   // output.color *= 0.5; // Nether/end ambient light?
 
