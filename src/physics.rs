@@ -3,6 +3,15 @@ use collision::{Aabb, Aabb3};
 
 use crate::world::ChunkManager;
 
+pub fn is_solid(block: u8) -> bool {
+    match block {
+        0 | 6 | 8 | 9 | 10 | 11 | 27 | 28 | 30 | 31 | 32 | 36 | 37 | 38 | 39 | 40 | 50 | 51
+        | 55 | 59 | 63 | 66 | 68 | 69 | 70 | 72 | 75 | 76 | 77 | 83 | 90 | 104 | 105 | 106
+        | 115 | 119 | 131 | 132 | 141 | 142 | 143 | 147 | 148 | 157 | 175 => false,
+        _ => true,
+    }
+}
+
 pub fn calculate_next_player_pos(
     world: &ChunkManager,
     position: Point3<f32>,
@@ -28,8 +37,7 @@ pub fn calculate_next_player_pos(
             for x in min.x..max.x {
                 let block = world.get_block(x, y, z);
 
-                // Skip air and portal blocks
-                if block != 0 && block != 90 {
+                if is_solid(block) {
                     let bb = Aabb3::new(Point3::new(0., 0., 0.), Point3::new(1., 1., 1.));
                     let bb = bb.add_v(Vector3::new(x as f32, y as f32, z as f32));
                     if collides(&bb, &bounds) {
