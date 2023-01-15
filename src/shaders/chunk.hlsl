@@ -34,9 +34,9 @@ VertexOutput vs_main(uint vertex_index : SV_VertexID, uint data) : SV_Position {
   data >>= 15;
 
   uint colormap_offset = data & 0xffu;
-  uint side = (data >> 8u) & 0x7u;
-  uint ao = (data >> 12u) & 0x3u;
-  uint light = (data >> 14u) & 0xfu;
+  // uint side = (data >> 8u) & 0x7u;
+  uint ao = (data >> 8u) & 0x3u;
+  uint light = (data >> 10u) & 0xfu;
 
   float3 pcc = float3(pc.chunk_coordinates * 16);
 
@@ -46,18 +46,20 @@ VertexOutput vs_main(uint vertex_index : SV_VertexID, uint data) : SV_Position {
   output.color = float3(1, 1, 1);
   output.dist = distance(pc.camera_pos, pos);
 
-  if (side == 1u) {
-    output.color *= 0.3;
-  }
-  if (side == 2u) {
-    output.color *= 0.7;
-  }
-  if (side == 3u) {
-    output.color *= 0.8;
-  }
-  if (side == 5u) {
-    output.color *= 0.5;
-  }
+  // if (side == 1u) {
+  //   output.color *= 0.3;
+  // }
+  // if (side == 2u) {
+  //   output.color *= 0.7;
+  // }
+  // if (side == 3u) {
+  //   output.color *= 0.8;
+  // }
+  // if (side == 5u) {
+  //   output.color *= 0.5;
+  // }
+
+  output.color = smoothstep(0, 1, float3((float)light / 16.0));
 
   // output.color *= 0.5; // Nether/end ambient light?
 
@@ -76,18 +78,23 @@ float linearFog(float z, float start, float end) {
 }
 
 float4 fs_main(VertexOutput input) : SV_Target0 {
-  float4 c = float4(
-      input.color * atlas_texture.Sample(atlas_sampler, input.uv).rgb, 1);
+  float4 tex_color = atlas_texture.Sample(atlas_sampler, input.uv);
+  float4 c = float4(input.color * tex_color.rgb, 1);
+
+  if (tex_color.a < 0.5) {
+    discard;
+  }
 
   float distance = 16 * max((pc.render_distance), 2);
 
   // Nether
-  // float4 fogc = float4(0.20, 0.031, 0.031, 1);
+  // float4 fogc = float4(GammaToLinear(float3(0.20, 0.012, 0.012)), 1);
   // float fog_amount = linearFog(input.dist, 0, distance);
 
   // Overworld
-  float4 fogc = float4(0.529, 0.667, 1, 1);
+  float4 fogc = float4(0.753, 0.847, 1, 1);
   float fog_amount = linearFog(input.dist, distance * 0.9, distance);
 
+  // return (lerp(c, fogc, fog_amount) * 0.001) + float4(input.color, 1.0);
   return lerp(c, fogc, fog_amount);
 }
