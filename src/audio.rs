@@ -70,25 +70,38 @@ impl AudioManager {
             samples.extend(pck_samples);
         }
 
+        // Minecraft's sound engine clamps pitch to 0.5 and 2.0 for some reason
+        let pitch = pitch.clamp(0.5, 2.0);
         let adjusted_samplerate = (ogg.ident_hdr.audio_sample_rate as f32 * pitch) as u32;
-        let frames = oddio::Frames::from_iter(
-            adjusted_samplerate,
-            samples.iter().map(|s| *s as f32 / 32767.),
-        );
+
+        let samples_f32 = samples
+            .iter()
+            .map(|s| *s as f32 / 32767.)
+            .collect::<Vec<f32>>();
+
+        let mono_samples = if ogg.ident_hdr.audio_channels == 1 {
+            samples_f32
+        } else {
+            convert_stereo_to_mono(&samples_f32)
+        };
+
+        let playback_length = mono_samples.len() as f32 / adjusted_samplerate as f32;
+
+        let frames = oddio::Frames::from_iter(adjusted_samplerate, mono_samples);
 
         let basic_signal: oddio::FramesSignal<_> = oddio::FramesSignal::from(frames);
-        let speed = oddio::Gain::new(basic_signal);
+        let gain = oddio::Gain::new(basic_signal);
         let pos: Vector3<f32> = position - self.camera_pos;
         let mut signal = self.scene_handle.control().play_buffered(
-            speed,
+            gain,
             oddio::SpatialOptions {
                 position: Point3::new(pos.x, pos.y, pos.z).into(),
                 radius: 1.0,
                 ..Default::default()
             },
             100.,
-            adjusted_samplerate,
-            samples.len() as f32 / adjusted_samplerate as f32,
+            ogg.ident_hdr.audio_sample_rate,
+            playback_length,
         );
 
         signal
@@ -125,4 +138,16 @@ impl AudioManager {
         self.camera_pos = position;
         self.camera_ori = orientation;
     }
+}
+
+fn convert_stereo_to_mono(pcm_samples: &[f32]) -> Vec<f32> {
+    let mut mono_samples = Vec::with_capacity(pcm_samples.len() / 2);
+    let mut i = 0;
+    while i < pcm_samples.len() {
+        let left = pcm_samples[i];
+        let right = pcm_samples[i + 1];
+        mono_samples.push((left + right) / 2.0);
+        i += 2;
+    }
+    mono_samples
 }
